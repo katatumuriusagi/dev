@@ -1,0 +1,37 @@
+dataset_root: C:/research/KHI_SaikuPatchCore_work/dataset_mvtec
+feature_good_root: C:/research/7_dataset
+work_dataset_root: C:/research/b30f3_short/work_datasets
+report_root: C:/research/b30f3_short
+project_root: C:/research/mvtec_ad2_exp
+saiku_script: C:/research/mvtec_ad2_exp/src/saiku_patchcore/main_SaikuPatchCore_multi_res_coreset_safe.py
+
+dataset: chip
+defect_type: chip
+
+model:
+  name: SaikuPatchCore
+  res_low: 256
+  res_high: 512
+  coreset_rate: 0.05
+  device: cuda
+  save_anomaly_maps: 1
+
+eval:
+  normal_count_mode: all
+  feature_subset_mode: b30f3_short_khi7_polar
+  max_feature_subset_size: 1
+  allow_replacement_for_insufficient_feature: false
+  seed: 42
+  image_score_column_candidates:
+    - score_max
+    - score
+    - image_score
+
+pixel_eval:
+  chip_only: true
+  chip_plus_good_zero_mask: true
+
+run:
+  resume: true
+  limit_eval_sets:
+  dry_run: false
