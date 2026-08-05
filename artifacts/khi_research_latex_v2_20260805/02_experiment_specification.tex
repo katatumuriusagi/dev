@@ -1,0 +1,248 @@
+\documentclass[a4paper,11pt]{ltjsarticle}
+\usepackage{khi-common}
+\begin{document}
+\KhiTitle{実験仕様書}{正常モード保存型層化コアセット・疎グラフPatchCore}{v2.0}
+
+\section{目的と適用範囲}
+本仕様書は，KHIオートリベッタ穿孔後画像に対するPatchCore系異常検知研究について，実験条件，データ分割，処理順序，評価指標，ログ，受入条件を再現可能な粒度で定義するものである．対象は，baseline再現，正常モード解析，層化coreset，疎graph推論，軽量化，一般化評価である．
+
+\KhiNote{本仕様書に記録されていない条件変更は，正式な比較実験として扱わない．要求設定，解決済み設定，実行時自動変更を分離して保存する．}
+
+\section{実験単位と識別子}
+各実験は一意な\texttt{experiment\_id}を持ち，最適化trialを含む場合は\texttt{study\_id}，\texttt{trial\_number}，\texttt{fidelity\_level}を併記する．
+
+\begin{table}[H]
+\centering
+\caption{必須識別情報}
+\begin{tabularx}{\linewidth}{L{42mm}L{35mm}Y}
+\toprule
+項目 & 例 & 意味 \\
+\midrule
+experiment\_id & E20260805\_001 & 単独実験の一意ID \\
+study\_id & OPT\_KHI6\_S1 & 最適化探索単位 \\
+parent\_id & E20260801\_010 & 複製・再開元 \\
+baseline\_id & E20260720\_BASE & 比較基準 \\
+schema\_version & 1.0.0 & 設定Schema版 \\
+code\_commit & Git SHA & 実行コード版 \\
+dataset\_manifest\_hash & SHA-256 & 使用画像集合の同一性 \\
+split\_manifest\_hash & SHA-256 & train/validation/test分割の同一性 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{データセット仕様}
+\subsection{ディレクトリ構造}
+\begin{lstlisting}
+dataset_root/
+  train/good/
+  validation/good/
+  validation/chip/
+  validation_ground_truth/chip/
+  test/good/
+  test/chip/
+  ground_truth/chip/
+\end{lstlisting}
+MVTec互換形式を利用する場合も，manifest上では同じ役割名へ正規化する．画像とGTはファイルstemまたは明示manifestで対応づけ，部分一致による推定は禁止する．
+
+\subsection{分割規則}
+\begin{enumerate}
+  \item trainには正常画像のみを使用する．
+  \item validationは閾値決定，モデル選択，Optuna目的値に使用する．
+  \item testは最終条件確定後にのみ使用する．
+  \item 同一撮影系列，同一ワーク，同一SHA-256画像を複数集合へ含めない．
+  \item KHI \#6と\#7は設備別評価と相互転移評価を分ける．
+  \item 異常画像のGT版を固定し，修正時はdataset versionを更新する．
+\end{enumerate}
+
+\subsection{データ監査}
+実験開始前に画像枚数，解像度，破損画像，重複，GT対応率，空GT，二値性，正常・異常ラベル，group leakageを検査する．違反時は原則として実験を停止する．
+
+\section{処理ステージ}
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+ node distance=5mm,
+ b/.style={draw=KhiBlue,fill=KhiLightBlue,rounded corners,minimum width=55mm,minimum height=8mm,align=center,font=\small},
+ n/.style={draw=KhiRed,fill=KhiOrange,very thick,rounded corners,minimum width=55mm,minimum height=8mm,align=center,font=\small\bfseries},
+ a/.style={-{Latex[length=2mm]},thick}
+]
+\node[b] (s0) {S00 設定・互換性検証};
+\node[b,below=of s0] (s1) {S01 環境・データセット監査};
+\node[b,below=of s1] (s2) {S02 色補正・ROI・極座標};
+\node[b,below=of s2] (s3) {S03 CNNパッチ特徴抽出};
+\node[n,below=of s3] (s4) {S04 正常モード推定};
+\node[n,below=of s4] (s5) {S05 層化coreset構築};
+\node[b,below=of s5] (s6) {S06 ANN index構築・PatchCore推論};
+\node[n,below=of s6] (s7) {S07 疎graph再評価};
+\node[b,below=of s7] (s8) {S08 評価・可視化・出力};
+\foreach \x/\y in {s0/s1,s1/s2,s2/s3,s3/s4,s4/s5,s5/s6,s6/s7,s7/s8}{\draw[a] (\x)--(\y);}
+\end{tikzpicture}
+\caption{正式実験の処理ステージ}
+\end{figure}
+無効なステージは\texttt{SKIPPED}，再利用したステージは\texttt{CACHED}，失敗したステージは\texttt{FAILED}，下流は\texttt{BLOCKED}として保存する．
+
+\section{前処理条件}
+\begin{longtable}{L{32mm}L{40mm}L{35mm}L{45mm}}
+\toprule
+設定 & 許容値 & baseline & 記録・注意点 \\
+\midrule
+色補正 & none, grayscale, Retinex, CLAHE & none & 一実験一方式．GTへは適用しない．\\
+ROI & none, fixed circle, Hough circle & fixed circle候補 & 中心，半径，成功率，fallbackを保存．\\
+ROI外部 & crop, mask, fill & mask & 塗り値とmaskを保存．\\
+極座標 & off, on & off & 画像はlinear，GTはnearest固定．\\
+polar size & 600x200, 900x300, 1200x400 & 900x300 & 左右端overlapと開始角を記録．\\
+Gaussian sigma & 0以上 & 4.0 & 異常map平滑化．\\
+\bottomrule
+\end{longtable}
+前処理順序は，色・照明補正，ROI，背景処理，極座標変換，resize，tensor化とする．変更する場合は\texttt{preprocess\_order}を保存する．
+
+\section{特徴抽出条件}
+初期比較ではImageNet事前学習済みWideResNet50-2を固定し，\texttt{layer2}と\texttt{layer3}を利用する．入力解像度は256，512，256+512を比較する．局所平均poolingはkernel 1，3，5，stride 1または2を候補とするが，提案手法の基礎効果確認中はkernel 3，stride 1へ固定する．
+
+特徴抽出器を変更する実験は，層化coresetとgraphの効果確認後に実施する．軽量backbone比較ではResNet18，MobileNet系等を候補とし，同一ROI・入力サイズ・bank予算で比較する．
+
+\section{次元削減仕様}
+\begin{table}[H]
+\centering
+\caption{次元削減の候補}
+\begin{tabularx}{\linewidth}{L{34mm}L{38mm}Y}
+\toprule
+方式 & 主設定 & 適用方針 \\
+\midrule
+none & 元次元 & baseline再現 \\
+PCA & 128, 256, 512次元 & 全train特徴から固定sampleでfit \\
+Incremental PCA & 同上，batch size & 大規模bankの省RAM化 \\
+Sparse Random Projection & 128, 256, 512次元 & fit負荷の低い比較条件 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+fitにはtrain goodのみを用いる．test特徴の混入は禁止する．変換器，入力次元，出力次元，fit特徴数，fit時間，transform時間を保存する．
+
+\section{正常モード推定仕様}
+正常モードは\texttt{explicit}，\texttt{latent}，\texttt{hybrid}の三方式を比較する．
+\begin{itemize}
+  \item explicit：machine ID，brightness class，work color，撮影系列，radial/angular bin等．
+  \item latent：画像レベルまたはpatchレベル正常特徴をPCA後にクラスタリングする．
+  \item hybrid：explicit group内でlatent clusterを推定する．
+\end{itemize}
+クラスタ数は探索前に固定候補を定め，silhouetteだけで決定しない．再samplingまたはseed間でAdjusted Rand Index等を確認し，代表画像を人手確認する．tiny modeの統合・保護規則を明示する．
+
+\section{層化コアセット仕様}
+比較対象はrandom，global greedy coreset，k-means，層化greedy coresetである．全条件で最終bankベクトル数を同一にする．
+
+\begin{table}[H]
+\centering
+\caption{層別予算割当方式}
+\begin{tabularx}{\linewidth}{L{43mm}Y}
+\toprule
+方式 & 定義 \\
+\midrule
+比例 & $B_c\propto n_c$ \\
+均等 & $B_c=B/C$ \\
+平方根 & $B_c\propto\sqrt{n_c}$ \\
+最低保証付き比例 & $b_{\min}$確保後に残りを$n_c$比例 \\
+最低保証付き平方根 & $b_{\min}$確保後に残りを$\sqrt{n_c}$比例 \\
+性能適応型 & validationでFPが多いmodeへ追加予算．探索後半のみ使用 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+各prototypeにmode ID，source image，patch座標，support count，mode frequency，feature varianceを付与する．
+
+\section{graph仕様}
+\subsection{ノードとエッジ}
+prototype nodeとquery nodeを区別する．ノード特徴はCNN特徴，圧縮特徴，画像座標，極座標，mode ID，support count，PatchCore距離を候補とする．エッジはfeature-kNN，spatial，polar periodic，same-mode，cross-scaleを比較する．
+
+\subsection{疎化}
+第1段階のPatchCoreスコア上位$M$個または上位$q\%$のみquery nodeとする．候補は$M\in\{16,32,64,128\}$，$q\in\{1,5,10\}$\%とする．全patch graphは精度上限の参考条件としてのみ実行する．
+
+\subsection{graphモデル}
+\begin{enumerate}
+  \item G0：graphなし．
+  \item G1：学習不要のgraph Laplacian不整合度．
+  \item G2：1層GraphSAGE．
+  \item G3：2層GraphSAGE．
+  \item G4：1層GAT．
+\end{enumerate}
+GNN学習時はtrain goodのみ，または明示した自己教師あり目的を用いる．異常GTを使用する場合は教師あり設定として分離する．
+
+\section{近傍探索とスコア}
+初期実装はFAISSのIndexFlatL2，IndexIVFFlat，IndexHNSWFlatを対象とする．IVFPQはbaselineと前処理比較が安定した後に追加する．距離はsquared L2とcosineを比較し，cosine時はL2正規化を必須とする．
+
+画像スコアは最大patchスコアをbaselineとし，top-$k$平均を追加比較する．多解像度融合はmeanとmaxを比較する．閾値はvalidation goodのpercentileまたは固定校正値で決定し，test上でF1最大となる閾値を正式結果に使用しない．
+
+\section{評価指標}
+\begin{longtable}{L{35mm}L{47mm}Y}
+\toprule
+分類 & 指標 & 目的 \\
+\midrule
+画像判定 & AUROC, AP, Precision, Recall, F1 & 正常・異常分離 \\
+低FPR運用 & Recall at fixed FPR, FP/1000 good & 工場での誤停止評価 \\
+局在 & Pixel AUROC, Pixel AP, AUPRO & 微小異常の位置検出 \\
+領域 & IoU, Dice, Localization Hit Rate & map形状と最大応答位置 \\
+正常モード & mode別FPR, worst-mode FPR & rare normal保護効果 \\
+異常条件 & サイズ別・位置別Recall & 微小切粉と境界切粉の評価 \\
+速度 & p50, p95, p99, throughput & 実運用時間 \\
+資源 & peak RAM, GPU memory, bank/index MB & 導入可能性 \\
+\bottomrule
+\end{longtable}
+
+\section{時間計測}
+\begin{equation}
+T_{\mathrm{total}}=T_{\mathrm{load}}+T_{\mathrm{pre}}+T_{\mathrm{CNN}}+T_{\mathrm{reduce}}+T_{\mathrm{ANN}}+T_{\mathrm{graph}}+T_{\mathrm{score}}+T_{\mathrm{save}}.
+\end{equation}
+初回warm-upを分離し，最低100枚または全test画像の連続処理からp50，p95，p99を計算する．GPU使用時は計時前後に同期する．batch size，thread数，device，precisionを必ず記録する．
+
+\section{ログと出力}
+各実験フォルダは次を含む．
+\begin{lstlisting}
+runs/<experiment_id>/
+  config/requested_config.yaml
+  config/resolved_config.yaml
+  manifest/dataset_manifest.csv
+  manifest/split_manifest.csv
+  logs/controller.log
+  logs/stdout.log
+  logs/stderr.log
+  logs/events.jsonl
+  status/stage_results.json
+  metrics/metrics.json
+  metrics/timing.json
+  predictions/predictions.csv
+  figures/roc_pr/
+  figures/anomaly_maps/
+  artifacts/reducer/
+  artifacts/memory_bank/
+  artifacts/index/
+  report/experiment_summary.md
+\end{lstlisting}
+生ログの共有版では認証情報と必要に応じて絶対パスをマスクする．
+
+\section{自動最適化の利用規則}
+Optuna等による探索は，baselineと単独効果を確認した後に使用する．最終testは目的値に使用しない．探索はPhase別に行い，前処理，層化，graph，検索を最初から全結合しない．低忠実度評価では同一の固定subsetを使い，全量結果との順位相関を確認する．
+
+\section{比較の受入条件}
+\begin{enumerate}
+  \item 比較対象間でtrain/validation/test manifestが一致する．
+  \item backbone，解像度，特徴層，最終bank数，閾値方式が意図どおり固定される．
+  \item 全結果に実行時間，bank数，特徴次元，device，seedが記録される．
+  \item 主要結果は3 seed以上またはbootstrap CIを伴う．
+  \item AUROCだけで結論せず，FP/FN代表例と異常mapを確認する．
+  \item 有利な一部カテゴリだけでなく，\#6，\#7，公開金属データの結果を分けて示す．
+\end{enumerate}
+
+\section{禁止事項}
+\begin{itemize}
+  \item testを用いたモード定義，PCA fit，閾値決定，ハイパーパラメータ選択．
+  \item 比較条件間で異なる画像集合を用いたまま平均値だけを比較すること．
+  \item bank容量または特徴次元が異なる条件を「同一計算予算」と表現すること．
+  \item 途中失敗画像を黙って除外すること．
+  \item コード・設定・manifestのhashを残さないこと．
+\end{itemize}
+
+\begin{thebibliography}{99}
+\bibitem{patchcore} K. Roth et al., ``Towards Total Recall in Industrial Anomaly Detection,'' CVPR, 2022.
+\bibitem{faiss} J. Johnson et al., ``Billion-scale Similarity Search with GPUs,'' IEEE Transactions on Big Data, 2019.
+\bibitem{hnsw} Y. Malkov and D. Yashunin, ``Efficient and Robust Approximate Nearest Neighbor Search Using HNSW Graphs,'' IEEE TPAMI, 2020.
+\bibitem{graphsage} W. Hamilton et al., ``Inductive Representation Learning on Large Graphs,'' NeurIPS, 2017.
+\end{thebibliography}
+\end{document}
