@@ -1,0 +1,284 @@
+\documentclass[a4paper,11pt]{ltjsarticle}
+\usepackage{khi-common}
+\begin{document}
+\KhiTitle{正常モード定義仕様書}{層化コアセットに用いる正常外観群の再現可能な定義}{v2.0}
+
+\section{目的}
+本仕様書は，KHI正常画像に含まれる外観変動を\textbf{正常モード}として定義し，層化coresetへ一貫して利用するための規則を定めるものである．正常モードは，単なる見た目の分類ではなく，データ分割，prototype予算，mode別FPR，説明可能性に使用する実験上の単位である．
+
+\begin{KhiBox}{基本原則}
+正常モードはtrain goodのみから定義する．異常画像，GT，最終testの性能を見ながらモードを作り直してはならない．モード定義を変更した場合はversionを更新し，旧結果と混在させない．
+\end{KhiBox}
+
+\section{用語}
+\begin{longtable}{L{42mm}Y}
+\toprule
+用語 & 定義 \\
+\midrule
+正常モード & 正常ラベル内に存在し，統計・特徴・撮像条件のいずれかで一貫した外観群 \\
+rare normal mode & 正常であるが全体頻度が低いモード \\
+protected mode & 層化coresetで最低prototype数を保証するモード \\
+explicit mode & machine ID，撮影系列，明度class等の既知属性で定義したモード \\
+latent mode & 正常特徴のclusterから推定したモード \\
+hybrid mode & explicit group内でlatent clusterを推定したモード \\
+tiny mode & サンプル数が安定推定に不足するモード候補 \\
+mode coverage & 各modeの特徴がbank内prototypeでどの程度近似されているか \\
+mode drift & 時間，設備，照明等に伴う正常モード分布の変化 \\
+\bottomrule
+\end{longtable}
+
+\section{入力データ}
+正常モード定義に使用する情報を次の四群に分ける．
+
+\subsection{画像メタデータ}
+\begin{itemize}
+  \item image ID，machine ID，撮影日時，撮影系列，ワークID，ロットID．
+  \item 元画像パス，SHA-256，解像度，GT有無．
+  \item train/validation/test役割．モード推定にはtrainのみを使用する．
+\end{itemize}
+
+\subsection{画像統計}
+\begin{itemize}
+  \item RGBまたはLabの平均・標準偏差・percentile．
+  \item ROI内明度，コントラスト，飽和率，暗部率，ハイライト率．
+  \item ROI中心，半径，円検出信頼度，背景面積率．
+  \item Retinex/CLAHE前後の統計差．
+\end{itemize}
+
+\subsection{特徴統計}
+\begin{itemize}
+  \item 画像レベルpooling特徴．
+  \item patch特徴の平均，共分散近似，percentile．
+  \item PCA/IPCA embedding．
+  \item prototypeとの距離，global coresetでのcoverage．
+\end{itemize}
+
+\subsection{位置属性}
+元画像座標$(x,y)$，正規化座標，ROI中心からの半径$r$，角度$\theta$，radial bin，angular binを記録する．極座標では$0^\circ$と$360^\circ$を周期隣接として扱う．
+
+\section{正常モード定義の方式}
+\subsection{M0：モードなし}
+全正常画像・patchを一つのmodeとして扱う．global coreset baselineである．
+
+\subsection{M1：手動explicit mode}
+既存の正常特徴分類，machine ID，撮影系列等をそのままmode labelとして使用する．初期候補は次である．
+\begin{table}[H]
+\centering
+\caption{explicit mode候補}
+\begin{tabularx}{\linewidth}{L{35mm}L{52mm}Y}
+\toprule
+属性 & 候補値 & 目的 \\
+\midrule
+machine ID & KHI \#6, KHI \#7 & 設備差の保護 \\
+brightness class & dark, mid, bright & 明度差の保護 \\
+work color & black, gray, white, mixed & ワーク色差の保護 \\
+撮影系列 & group key & 連続撮影差・leakage管理 \\
+ROI size & small, medium, large & 視野・ワーク径差 \\
+radial bin & inner, middle, outer & 位置依存bank候補 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{M2：latent image mode}
+train good画像ごとに画像レベル特徴を作り，標準化，PCA，clusterの順に処理する．cluster候補はk-meansを第一候補とし，GMMまたはHDBSCANは追加比較とする．
+
+\subsection{M3：latent patch mode}
+patch特徴を直接clusterする．画像レベルmodeより細かな反射・位置差を扱えるが，patch数が大きく，modeの意味が不明確になりやすい．固定sample，位置bin，画像別上限を用いて多数画像が独占しないようにする．
+
+\subsection{M4：hybrid mode}
+まずmachine IDやbrightness等のexplicit groupを作り，各group内でlatent clusterを推定する．mode数爆発を防ぐため，最大mode数と最低サンプル数を設定する．
+
+\section{標準パイプライン}
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+ b/.style={draw=KhiBlue,fill=KhiLightBlue,rounded corners,minimum width=42mm,minimum height=9mm,align=center,font=\small},
+ n/.style={draw=KhiRed,fill=KhiOrange,rounded corners,minimum width=44mm,minimum height=9mm,align=center,font=\small\bfseries},
+ a/.style={-{Latex[length=2mm]},thick}
+]
+\node[b] (d) {train good manifest};
+\node[b,right=8mm of d] (s) {画像・ROI統計};
+\node[b,right=8mm of s] (f) {正常特徴抽出};
+\node[b,below=10mm of f] (p) {標準化・PCA/IPCA};
+\node[n,left=8mm of p] (c) {mode候補生成};
+\node[n,left=8mm of c] (q) {安定性・代表画像確認};
+\node[b,below=10mm of q] (v) {mode version固定};
+\node[b,right=8mm of v] (b) {層化予算配分};
+\node[b,right=8mm of b] (o) {prototype bank};
+\draw[a] (d)--(s);\draw[a] (s)--(f);\draw[a] (f)--(p);\draw[a] (p)--(c);\draw[a] (c)--(q);\draw[a] (q)--(v);\draw[a] (v)--(b);\draw[a] (b)--(o);
+\end{tikzpicture}
+\caption{正常モード定義から層化bank構築までの流れ}
+\end{figure}
+
+\section{前処理と特徴の固定条件}
+モード方式を比較するときは，ROI，色補正，backbone，入力解像度，特徴層，pooling，PCA sample，seedを固定する．前処理差とmode差を同時に変更しない．
+
+初期条件は次とする．
+\begin{itemize}
+  \item ROI：研究時点の最良固定円または確定済み自動ROI．
+  \item 色補正：rawをbaselineとし，Retinex/CLAHEは別実験．
+  \item backbone：WideResNet50-2，layer2+layer3．
+  \item 解像度：256+512またはbaseline確定値．
+  \item mode推定特徴：画像ごとのpatch平均と分散，またはPCA後embedding．
+\end{itemize}
+
+\section{cluster数の決定}
+cluster数$K$は指標一つで自動決定しない．$K\in\{2,3,4,5,6,8,10\}$等の事前候補を評価し，次を総合する．
+\begin{enumerate}
+  \item silhouette score，Davies--Bouldin index．
+  \item seed間・bootstrap間のAdjusted Rand Index．
+  \item clusterごとの画像数，撮影系列数，設備数．
+  \item 代表画像の視覚的一貫性．
+  \item global coresetのcoverageと正常FPRとの関係．
+  \item tiny modeの過剰生成がないこと．
+\end{enumerate}
+最終$K$はvalidation異常性能の最大値だけで決めない．
+
+\section{tiny modeとrare mode}
+\subsection{判定}
+rare modeは全体比率だけでなく絶対画像数，patch数，撮影系列数を併用する．初期目安として，画像比率5\%未満または画像数20未満を候補とするが，正式値はデータ分布確認後に固定する．
+
+\subsection{処理}
+\begin{table}[H]
+\centering
+\caption{小規模modeの処理候補}
+\begin{tabularx}{\linewidth}{L{38mm}Y}
+\toprule
+処理 & 適用条件 \\
+\midrule
+保護 & 外観が一貫し，複数系列から確認できるrare normal \\
+近接modeへ統合 & 特徴・画像統計・人手確認で同一外観と判断できる \\
+未確定modeとして隔離 & 画像数不足で正常性を断定できない \\
+データ追加要求 & 工場担当者の確認が必要な外観 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{層化bank予算}
+総prototype予算を$B$，mode数を$C$，mode$c$の規模を$n_c$とする．比較する配分式を次に示す．
+
+\subsection{比例割当}
+\begin{equation}
+B_c=B\frac{n_c}{\sum_j n_j}.
+\end{equation}
+多数派を忠実に表すが，rare modeが消えやすい．
+
+\subsection{均等割当}
+\begin{equation}
+B_c=\frac{B}{C}.
+\end{equation}
+rare modeを強く保護するが，多数派の複雑性を表しにくい．
+
+\subsection{平方根割当}
+\begin{equation}
+B_c=B\frac{\sqrt{n_c}}{\sum_j\sqrt{n_j}}.
+\end{equation}
+比例と均等の中間である．
+
+\subsection{最低保証付き平方根割当}
+\begin{equation}
+B_c=b_{\min}+\left(B-Cb_{\min}\right)\frac{\sqrt{n_c}}{\sum_j\sqrt{n_j}}.
+\end{equation}
+初期提案方式とする．$Cb_{\min}>B$となる設定は禁止する．整数丸め後の総和が$B$になるよう残差を調整する．
+
+\section{prototype選択}
+各mode内でrandom，greedy k-center，k-means centroidを比較する．主提案はmode内greedy k-centerである．prototypeには次を保存する．
+\begin{lstlisting}
+prototype_id
+normal_mode_id
+source_image_id
+source_patch_index
+source_xy
+source_polar_rt
+feature_vector_or_path
+support_count
+mode_frequency
+local_variance
+selection_distance
+created_by_experiment_id
+\end{lstlisting}
+
+\section{mode coverageの評価}
+trainまたはvalidation goodの各patchから同mode prototypeへの最近傍距離を計算する．mode$c$のcoverage errorを
+\begin{equation}
+E_c=\frac{1}{|X_c|}\sum_{z\in X_c}\min_{m\in M_c}\lVert z-m\rVert_2
+\end{equation}
+と定義する．平均だけでなく95 percentileと最大値を記録する．global bankへの距離と層化bankへの距離を比較し，rare modeでの改善を確認する．
+
+\section{正常モード別評価}
+\begin{itemize}
+  \item mode別正常画像スコア分布．
+  \item mode別FPR，worst-mode FPR，FP/1000 good．
+  \item mode別prototype数，coverage error．
+  \item mode間混同行列：最寄りprototypeがどのmodeに属するか．
+  \item FP上位画像と高スコアpatchの位置．
+\end{itemize}
+
+\section{modeの安定性}
+同一条件でseedを変え，cluster対応をHungarian matching等で合わせた後にARI，NMI，mode size，代表画像一致を評価する．撮影期間を分けた再推定も行い，mode driftを確認する．
+
+\section{version管理}
+正常モード定義には一意な\texttt{normal\_mode\_version}を付与する．次の変更でmajorまたはminor versionを更新する．
+\begin{table}[H]
+\centering
+\caption{version更新規則}
+\begin{tabularx}{\linewidth}{L{33mm}L{31mm}Y}
+\toprule
+変更 & 更新 & 例 \\
+\midrule
+定義方式変更 & major & explicitからhybridへ変更 \\
+特徴抽出器変更 & major & WRN50からDINOv2へ変更 \\
+train manifest変更 & major & 新ロット追加，重複除去 \\
+cluster数変更 & minor & $K=4$から$K=5$ \\
+label名称修正 & patch & 意味を変えない表記修正 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{出力ファイル}
+\begin{lstlisting}
+normal_modes/<version>/
+  definition.yaml
+  input_manifest.csv
+  image_statistics.csv
+  feature_summary.npz
+  reducer.pkl
+  cluster_model.pkl
+  mode_assignments.csv
+  mode_summary.csv
+  representative_images.csv
+  stability_report.json
+  coverage_report.csv
+  figures/embedding_2d.pdf
+  figures/mode_montage_*.png
+  README.md
+\end{lstlisting}
+
+\section{受入条件}
+\begin{enumerate}
+  \item 全modeがtrain goodのみから生成されている．
+  \item 各modeに画像，系列，設備，統計，代表画像が記録される．
+  \item tiny modeの扱いが明示される．
+  \item seed間安定性を確認し，不安定modeを正式層として使わない．
+  \item global coresetでのcoverageとmode別FPRの関係を報告する．
+  \item mode変更時にversionと依存実験を追跡できる．
+  \item 人手分類を用いる場合は分類基準と判定者を記録する．
+\end{enumerate}
+
+\section{初回に採用する定義候補}
+Phase 2では次の四条件を実行する．
+\begin{enumerate}
+  \item M0：modeなし．
+  \item M1：既存の正常特徴分類を統合したexplicit mode．
+  \item M2：画像レベルPCA+k-means，$K\in\{3,5,8\}$．
+  \item M4：machine ID別の画像レベルPCA+k-means．
+\end{enumerate}
+この結果から正常モードの存在と安定性を確認した後に，patch-level latent modeへ進む．
+
+\begin{thebibliography}{99}
+\bibitem{patchcore} K. Roth et al., ``Towards Total Recall in Industrial Anomaly Detection,'' CVPR, 2022.
+\bibitem{softpatch} X. Jiang et al., ``SoftPatch: Unsupervised Anomaly Detection with Noisy Data,'' NeurIPS, 2022.
+\bibitem{tailedcore} J. Jung et al., ``TailedCore: Few-Shot Sampling for Unsupervised Long-Tail Noisy Anomaly Detection,'' CVPR, 2025.
+\bibitem{pca} I. Jolliffe and J. Cadima, ``Principal Component Analysis: A Review and Recent Developments,'' Philosophical Transactions A, 2016.
+\end{thebibliography}
+\end{document}
