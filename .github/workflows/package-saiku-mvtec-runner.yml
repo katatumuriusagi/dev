@@ -7,6 +7,12 @@ on:
     paths:
       - "artifacts/saiku_mvtec_experiment_runner_20260806/**"
       - ".github/workflows/package-saiku-mvtec-runner.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "artifacts/saiku_mvtec_experiment_runner_20260806/**"
+      - ".github/workflows/package-saiku-mvtec-runner.yml"
   workflow_dispatch:
 
 jobs:
