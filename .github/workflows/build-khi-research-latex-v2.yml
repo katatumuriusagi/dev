@@ -4,15 +4,17 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'artifacts/khi_research_latex_v2_20260805/**'
+      - 'artifacts/khi_research_latex_v2_20260805/*.tex'
+      - 'artifacts/khi_research_latex_v2_20260805/*.sty'
       - '.github/workflows/build-khi-research-latex-v2.yml'
   pull_request:
     paths:
-      - 'artifacts/khi_research_latex_v2_20260805/**'
+      - 'artifacts/khi_research_latex_v2_20260805/*.tex'
+      - 'artifacts/khi_research_latex_v2_20260805/*.sty'
       - '.github/workflows/build-khi-research-latex-v2.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -44,6 +46,21 @@ jobs:
           zip -9 khi_research_latex_v2_20260805.zip \
             ./*.pdf ./*.tex ./khi-common.sty ./SHA256SUMS.txt
           ls -lh ./*.pdf ./khi_research_latex_v2_20260805.zip
+
+      - name: Publish generated PDFs on push
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add artifacts/khi_research_latex_v2_20260805/*.pdf
+          git add artifacts/khi_research_latex_v2_20260805/SHA256SUMS.txt
+          git add artifacts/khi_research_latex_v2_20260805/khi_research_latex_v2_20260805.zip
+          if ! git diff --cached --quiet; then
+            git commit -m 'Publish compiled KHI LaTeX PDFs [skip ci]'
+            git push
+          fi
 
       - name: Upload compiled deliverables
         uses: actions/upload-artifact@v4
