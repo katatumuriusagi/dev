@@ -1,0 +1,55 @@
+name: Build KHI Research LaTeX v2
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'artifacts/khi_research_latex_v2_20260805/**'
+      - '.github/workflows/build-khi-research-latex-v2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compile six LuaLaTeX documents
+        uses: xu-cheng/latex-action@v3
+        with:
+          root_file: |
+            artifacts/khi_research_latex_v2_20260805/01_research_plan.tex
+            artifacts/khi_research_latex_v2_20260805/02_experiment_specification.tex
+            artifacts/khi_research_latex_v2_20260805/03_beginner_knowledge_guide.tex
+            artifacts/khi_research_latex_v2_20260805/04_related_work_review.tex
+            artifacts/khi_research_latex_v2_20260805/05_normal_mode_definition_spec.tex
+            artifacts/khi_research_latex_v2_20260805/06_experiment_matrix.tex
+          work_in_root_file_dir: true
+          latexmk_use_lualatex: true
+          args: -interaction=nonstopmode -halt-on-error -file-line-error
+
+      - name: Package PDFs and LaTeX sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd artifacts/khi_research_latex_v2_20260805
+          sha256sum ./*.pdf > SHA256SUMS.txt
+          zip -9 khi_research_latex_v2_20260805.zip \
+            ./*.pdf ./*.tex ./khi-common.sty ./SHA256SUMS.txt
+          ls -lh ./*.pdf ./khi_research_latex_v2_20260805.zip
+
+      - name: Upload compiled deliverables
+        uses: actions/upload-artifact@v4
+        with:
+          name: khi-research-latex-v2-compiled
+          path: |
+            artifacts/khi_research_latex_v2_20260805/*.pdf
+            artifacts/khi_research_latex_v2_20260805/*.tex
+            artifacts/khi_research_latex_v2_20260805/khi-common.sty
+            artifacts/khi_research_latex_v2_20260805/SHA256SUMS.txt
+            artifacts/khi_research_latex_v2_20260805/khi_research_latex_v2_20260805.zip
+          if-no-files-found: error
+          retention-days: 30
