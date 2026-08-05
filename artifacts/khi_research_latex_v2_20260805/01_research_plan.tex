@@ -1,0 +1,176 @@
+\documentclass[a4paper,11pt]{ltjsarticle}
+\usepackage{khi-common}
+\begin{document}
+\KhiTitle{研究計画書}{正常モード保存型層化コアセットと疎グラフPatchCoreによる軽量局所異常検知}{v2.0}
+
+\section{研究テーマ}
+本研究の主題は，オートリベッタ穿孔後画像に含まれる切粉・異物を対象として，正常画像のみから正常分布を構築するPatchCore系異常検知を高度化することである．特に，同一製品内に存在する明度，反射，ワーク色，撮像系列，設備差などの\textbf{正常外観モードの不均衡}と，切粉のような\textbf{微小局所異常}を同時に扱う．
+
+提案の中心は，稀だが正常な特徴をmemory bankから失わない\textbf{正常モード保存型層化コアセット}と，PatchCoreが疑わしいと判断した少数パッチのみを関係性に基づいて再評価する\textbf{疎グラフ文脈推論}である．最終的には，CPUまたは低価格GPUで実用的な判定時間を達成し，KHIの工場導入および金属製品全般への展開を目指す．
+
+\begin{KhiBox}{本研究が解く問題}
+通常のglobal coresetでは，多数派の正常特徴が優先され，少数の正常モードがmemory bankから失われる可能性がある．また，パッチ単体の最近傍距離だけでは，微小切粉と反射・汚れ・ROI境界を区別しにくい場合がある．本研究は，同じ計算予算の下で「稀な正常の保護」と「局所関係の利用」を両立する．
+\end{KhiBox}
+
+\section{背景と研究上の位置づけ}
+PatchCoreは，事前学習CNNから得た正常パッチ特徴をmemory bankとして保持し，テストパッチとの最近傍距離により異常度を計算する手法である．共有済みSaikuPatchCore系では，多解像度特徴，FAISS検索，画像・画素レベル評価を組み合わせており，metal nutでは256と512の平均融合が高い画素レベル性能を示している．一方，KHI画像の特徴別評価では，bright系や一部grayblack系などで性能低下が確認され，正常外観の多様性が誤検知に関係する可能性が示唆されている．
+
+近年の研究では，学習データ汚染に対するSoftPatch，long-tail条件を扱うTailedCore，位置・近傍情報を利用するPNI，高速推論を目的とするEfficientADなどが提案されている．本研究は，製品クラス間ではなく\textbf{同一製品内の正常モード不均衡}を明示的に扱い，さらに全パッチではなく上位候補のみへグラフ推論を適用する点に研究上の焦点を置く．
+
+\section{研究目的}
+\begin{enumerate}
+  \item KHI正常画像に複数の正常モードが存在することを定量的・定性的に確認する．
+  \item global coresetで少数正常モードの代表特徴が失われる条件を明らかにする．
+  \item 同じmemory bank容量において，正常モードを保護する層化コアセットを構築する．
+  \item PatchCoreスコア上位の少数パッチのみを疎グラフで再評価し，微小切粉の局在性能を改善する．
+  \item 精度，誤検知率，判定時間，RAM，memory bank容量のPareto改善を評価する．
+  \item KHI \#6，KHI \#7，公開金属データセットで再現性と一般化可能性を検証する．
+\end{enumerate}
+
+\section{研究質問と仮説}
+\begin{longtable}{L{12mm}L{65mm}L{82mm}}
+\toprule
+ID & 研究質問 & 検証仮説 \\
+\midrule
+RQ1 & 同一製品内に複数の正常モードが存在するか & 明度，反射，設備，撮影系列，位置等に対応した複数モードが，画像統計と特徴空間の両方で確認できる．\\
+RQ2 & global coresetで少数モードが失われるか & 全体頻度が低いモードほどprototype coverageが低下し，そのモードの正常画像FPRが上昇する．\\
+RQ3 & 層化coresetは誤検知を減らせるか & 同じbank容量でworst-mode FPRとFP/1000 goodを低減し，chip Recallを維持する．\\
+RQ4 & 疎graphは局在を改善するか & PatchCore上位パッチのみのgraph再評価によりPixel APまたはAUPROが改善し，追加時間は総推論時間の20\%以内となる．\\
+RQ5 & 両手法は相乗効果を持つか & 層化coresetと疎graphの統合が，精度・速度・容量のPareto front上でbaselineより優れる．\\
+RQ6 & 金属製品へ一般化できるか & 同一の層化・graph規則を用い，製品ごとに正常bankのみを再構築することで複数金属カテゴリへ適用できる．\\
+\bottomrule
+\end{longtable}
+
+\section{提案手法}
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  node distance=7mm and 7mm,
+  block/.style={draw=KhiBlue,rounded corners,fill=KhiLightBlue,minimum width=31mm,minimum height=9mm,align=center,font=\small},
+  new/.style={draw=KhiRed,very thick,rounded corners,fill=KhiOrange,minimum width=34mm,minimum height=10mm,align=center,font=\small\bfseries},
+  arrow/.style={-{Latex[length=2.5mm]},thick,KhiBlue}
+]
+\node[block] (input) {入力画像};
+\node[block,right=of input] (roi) {照明補正・ROI\\必要時極座標変換};
+\node[block,right=of roi] (cnn) {事前学習CNN\\パッチ特徴};
+\node[new,right=of cnn] (mode) {正常モード推定\\層化coreset};
+\node[block,below=of mode] (pc) {高速PatchCore\\最近傍距離};
+\node[new,left=of pc] (graph) {上位$M$パッチのみ\\疎graph再評価};
+\node[block,left=of graph] (out) {異常スコア\\異常マップ・判定};
+\draw[arrow] (input)--(roi);
+\draw[arrow] (roi)--(cnn);
+\draw[arrow] (cnn)--(mode);
+\draw[arrow] (mode)--(pc);
+\draw[arrow] (pc)--(graph);
+\draw[arrow] (graph)--(out);
+\end{tikzpicture}
+\caption{提案する正常モード保存型層化コアセット・疎グラフPatchCoreの全体像}
+\end{figure}
+
+\subsection{正常モード保存型層化コアセット}
+正常モードは，明示属性と潜在特徴を組み合わせて定義する．明示属性にはmachine ID，明度クラス，ワーク色，撮像系列，半径区間，角度区間を用いる．潜在モードには正常特徴をPCAまたはIPCAで圧縮した後のクラスタを用いる．異常画像とGTはモード定義へ使用しない．
+
+モード$c$の画像数またはpatch数を$n_c$，総bank予算を$B$，最低保証数を$b_{\min}$とすると，初期候補として次の最低保証付き平方根割当を検証する．
+\begin{equation}
+B_c=b_{\min}+\left(B-Cb_{\min}\right)
+\frac{\sqrt{n_c}}{\sum_{j=1}^{C}\sqrt{n_j}}.
+\end{equation}
+各モード内でgreedy coresetを実行し，最終的に全モードのprototypeを結合する．比例，均等，平方根，最低保証付き比例を比較対象とする．
+
+\subsection{疎グラフ文脈推論}
+テスト画像の全パッチへGNNを適用すると，計算量と平滑化の危険が大きい．そこで，第1段階でPatchCoreスコアを計算し，上位$M$パッチまたは上位$q\%$のパッチだけをquery nodeとする．各query nodeを近傍prototype，空間近傍，極座標近傍へ接続する．
+
+最終パッチスコアは，特徴距離$d_i^{\mathrm{PC}}$，graph不整合度$d_i^{\mathrm{G}}$，正常モード内距離$d_i^{\mathrm{mode}}$を用いて次の形で構成する．
+\begin{equation}
+s_i=\alpha d_i^{\mathrm{PC}}+\beta d_i^{\mathrm{G}}+\gamma d_i^{\mathrm{mode}}.
+\end{equation}
+初期段階では学習不要のgraph Laplacian，次に1層GraphSAGE，最後にGATを比較する．
+
+\section{データセットと分割方針}
+\begin{table}[H]
+\centering
+\caption{主要データセットの役割}
+\begin{tabularx}{\linewidth}{L{34mm}C{26mm}Y Y}
+\toprule
+データセット & 主目的 & 分割原則 & 主な評価 \\
+\midrule
+KHI \#6 & 主対象・設備内評価 & 撮影系列・ワーク単位 & Image/Pixel指標，mode別FPR，速度 \\
+KHI \#7 & 主対象・設備差評価 & 撮影系列・ワーク単位 & \#6との相互転移，FP/FN事例 \\
+MVTec AD 2金属系 & 難条件・照明変動 & 公式分割 & AUPRO，Pixel AP，速度 \\
+MPDD & 金属製品一般化 & 公式またはgroup-aware & カテゴリ別性能，容量 \\
+MVTec AD金属系 & 既存研究比較 & 公式分割 & Image/Pixel AUROC，AP \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+train goodは特徴抽出器の固定forward，reducer fit，normal mode推定，memory bank構築にのみ使用する．validation good/chipは閾値校正とハイパーパラメータ選択に使用する．最終testは条件確定後に一度だけ評価する．同一撮像系列や重複画像のtrain/test混入を禁止する．
+
+\section{評価設計}
+\subsection{学術評価}
+\begin{itemize}
+  \item 画像レベル：Image AUROC，Image AP，Recall at fixed FPR，FP/1000 good．
+  \item 画素レベル：Pixel AUROC，Pixel AP，AUPRO，IoU，Dice，Localization Hit Rate．
+  \item モード頑健性：mode別FPR，worst-mode FPR，rare-mode FPR，prototype coverage．
+  \item 統計：主要条件3 seed以上，bootstrap 95\%信頼区間，カテゴリ別・異常サイズ別結果．
+\end{itemize}
+
+\subsection{工場導入評価}
+end-to-endのp50，p95，p99時間を測定し，画像読込み，前処理，CNN，次元削減，ANN検索，graph構築，GNN，保存へ分解する．最大CPU RAM，最大GPUメモリ，モデル容量，memory bank容量，index容量，起動時間，連続1000枚処理時の失敗率を記録する．
+
+\section{比較対象とアブレーション}
+\begin{table}[H]
+\centering
+\caption{必須アブレーション}
+\begin{tabular}{lccc}
+\toprule
+条件 & 層化coreset & graph文脈 & 上位patchのみ \\
+\midrule
+Original PatchCore & \NG & \NG & \NG \\
+global coreset & \NG & \NG & \NG \\
+層化coreset単独 & \OK & \NG & \NG \\
+graph単独・全patch & \NG & \OK & \NG \\
+graph単独・疎推論 & \NG & \OK & \OK \\
+提案統合手法 & \OK & \OK & \OK \\
+\bottomrule
+\end{tabular}
+\end{table}
+比較時はbackbone，入力解像度，特徴層，bank総数，特徴次元，閾値決定法を固定する．
+
+\section{成功基準}
+以下は研究開始時の暫定gateであり，現場タクトタイムと許容FPRの確認後に更新する．
+\begin{itemize}
+  \item 同じmemory bank容量でImage APがbaseline以上である．
+  \item Pixel APまたはAUPROを3ポイント以上改善する，または同等精度で2倍以上高速化する．
+  \item worst-mode FPRおよびFP/1000 goodをbaseline比30\%以上削減する．
+  \item chip Recallを低下させない．
+  \item CPU end-to-end p95を中期的に100 ms/image以下へ近づける．
+  \item 疎graph追加時間を総推論時間の20\%以下にする．
+\end{itemize}
+
+\section{研究ロードマップ}
+\begin{enumerate}
+  \item Phase 0：現場制約，データID，group-aware split，GT版を固定する．
+  \item Phase 1：Original PatchCoreとSaikuPatchCore baselineを再現する．
+  \item Phase 2：正常モードの存在，安定性，global coresetのcoverageを検証する．
+  \item Phase 3：層化coreset単独を同一bank予算で評価する．
+  \item Phase 4：graph単独をLaplacian，GraphSAGE，GATの順に評価する．
+  \item Phase 5：層化coresetと疎graphを統合し，Pareto評価を行う．
+  \item Phase 6：IPCA，ANN，単一解像度，軽量backbone，ONNX/OpenVINO等を評価する．
+  \item Phase 7：KHI設備間転移および公開金属データへ展開する．
+\end{enumerate}
+
+\section{想定される貢献と限界}
+学術的貢献は，同一製品内のrare normalを保護するbank設計，query-selectiveな疎graph文脈推論，accuracy--latency--memory--worst-mode fairnessの同時評価にある．工場導入上は，重いbank構築をofflineへ分離し，online側をROI，CNN，ANN，必要時graphに限定する．
+
+限界として，KHI異常画像数が少ないこと，正常モード定義がデータ依存となり得ること，GNNが微小異常を平滑化する危険があることを明記する．これらには公開データ併用，cluster stability評価，1--2層の浅いgraph，残差融合，異常サイズ別評価で対処する．
+
+\begin{thebibliography}{99}
+\bibitem{patchcore} K. Roth et al., ``Towards Total Recall in Industrial Anomaly Detection,'' CVPR, 2022.
+\bibitem{softpatch} X. Jiang et al., ``SoftPatch: Unsupervised Anomaly Detection with Noisy Data,'' NeurIPS, 2022.
+\bibitem{pni} J. Bae et al., ``PNI: Industrial Anomaly Detection using Position and Neighborhood Information,'' ICCV, 2023.
+\bibitem{efficientad} K. Batzner et al., ``EfficientAD: Accurate Visual Anomaly Detection at Millisecond-Level Latencies,'' WACV, 2024.
+\bibitem{tailedcore} J. Jung et al., ``TailedCore: Few-Shot Sampling for Unsupervised Long-Tail Noisy Anomaly Detection,'' CVPR, 2025.
+\bibitem{graphsage} W. Hamilton et al., ``Inductive Representation Learning on Large Graphs,'' NeurIPS, 2017.
+\bibitem{gat} P. Veli\v{c}kovi\'c et al., ``Graph Attention Networks,'' ICLR, 2018.
+\end{thebibliography}
+\end{document}
