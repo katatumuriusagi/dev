@@ -1,0 +1,74 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{khi-common}[2026/08/05 KHI research document style]
+\RequirePackage{luatexja}
+\RequirePackage{luatexja-fontspec}
+\RequirePackage{geometry}
+\geometry{a4paper,top=22mm,bottom=24mm,left=23mm,right=23mm}
+\RequirePackage{amsmath,amssymb}
+\RequirePackage{booktabs,longtable,tabularx,array,multirow}
+\RequirePackage{graphicx}
+\RequirePackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,calc,backgrounds}
+\RequirePackage{xcolor}
+\RequirePackage{enumitem}
+\RequirePackage{hyperref}
+\RequirePackage{fancyhdr}
+\RequirePackage{titlesec}
+\RequirePackage{caption}
+\RequirePackage{float}
+\RequirePackage{url}
+\RequirePackage{listings}
+\definecolor{KhiBlue}{HTML}{1F4E79}
+\definecolor{KhiLightBlue}{HTML}{DCE6F1}
+\definecolor{KhiGreen}{HTML}{E2F0D9}
+\definecolor{KhiOrange}{HTML}{FCE4D6}
+\definecolor{KhiGray}{HTML}{F2F2F2}
+\definecolor{KhiRed}{HTML}{C00000}
+\hypersetup{colorlinks=true,linkcolor=KhiBlue,citecolor=KhiBlue,urlcolor=KhiBlue}
+\setlength{\parindent}{1zw}
+\setlength{\parskip}{0.25em}
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.25}
+\setlist[itemize]{leftmargin=2zw,itemsep=0.2em,topsep=0.3em}
+\setlist[enumerate]{leftmargin=2.5zw,itemsep=0.2em,topsep=0.3em}
+\titleformat{\section}{\Large\bfseries\color{KhiBlue}}{\thesection}{0.8em}{}
+\titleformat{\subsection}{\large\bfseries\color{KhiBlue}}{\thesubsection}{0.8em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries}{\thesubsubsection}{0.8em}{}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small KHI PatchCore Research}
+\fancyhead[R]{\small \leftmark}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.3pt}
+\newcommand{\KhiTitle}[3]{%
+  \begin{titlepage}
+    \centering
+    \vspace*{28mm}
+    {\Huge\bfseries\color{KhiBlue} #1\par}
+    \vspace{8mm}
+    {\Large #2\par}
+    \vfill
+    \begin{tabular}{rl}
+      \textbf{対象研究：} & オートリベッタ穿孔後の切粉・異物検知\\
+      \textbf{基盤手法：} & PatchCore / SaikuPatchCore\\
+      \textbf{文書版：} & #3\\
+      \textbf{作成日：} & 2026年8月5日
+    \end{tabular}
+    \vfill
+    {\large 研究分析プロジェクト\par}
+  \end{titlepage}
+  \tableofcontents
+  \clearpage
+}
+\newenvironment{KhiBox}[1]{%
+  \begin{center}\begin{minipage}{0.94\linewidth}
+  \colorbox{KhiLightBlue}{\parbox{0.96\linewidth}{\textbf{#1}}}\par\smallskip
+}{\end{minipage}\end{center}}
+\newcommand{\KhiNote}[1]{\begin{center}\fcolorbox{KhiBlue}{KhiGray}{\parbox{0.9\linewidth}{#1}}\end{center}}
+\newcommand{\OK}{\textcolor{KhiBlue}{\textbf{○}}}
+\newcommand{\NG}{\textcolor{KhiRed}{\textbf{×}}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\captionsetup{font=small,labelfont=bf}
+\lstset{basicstyle=\ttfamily\small,backgroundcolor=\color{KhiGray},frame=single,breaklines=true,columns=fullflexible}
