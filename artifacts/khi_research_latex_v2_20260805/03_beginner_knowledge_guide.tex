@@ -1,0 +1,250 @@
+\documentclass[a4paper,11pt]{ltjsarticle}
+\usepackage{khi-common}
+\begin{document}
+\KhiTitle{初学者向け基礎知識資料}{PatchCore・層化コアセット・GNN・高速化を理解するために}{v2.0}
+
+\section{この資料の目的}
+本資料は，オートリベッタ穿孔後の切粉・異物検知研究を進めるために必要な基礎知識を，初学者向けに整理するものである．数式は最小限にし，何を入力し，どの処理を行い，何が出力されるかを中心に説明する．
+
+\section{異常検知とは何か}
+通常の画像分類は，正常・切粉・傷などのラベル付き画像からクラス境界を学習する．一方，工業異常検知では異常の種類を事前にすべて収集できないため，正常画像のみから「正常らしさ」を構築し，そこから離れた画像や領域を異常とみなすことが多い．
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+ b/.style={draw=KhiBlue,fill=KhiLightBlue,rounded corners,minimum width=43mm,minimum height=11mm,align=center},
+ r/.style={draw=KhiRed,fill=KhiOrange,rounded corners,minimum width=43mm,minimum height=11mm,align=center},
+ a/.style={-{Latex[length=2.5mm]},thick}
+]
+\node[b] (n) {正常画像だけを収集};
+\node[b,right=17mm of n] (m) {正常特徴の分布を記憶};
+\node[r,right=17mm of m] (t) {未知画像との距離を計算};
+\node[b,below=12mm of t] (o) {異常スコアと異常map};
+\draw[a] (n)--(m);\draw[a] (m)--(t);\draw[a] (t)--(o);
+\end{tikzpicture}
+\caption{one-class異常検知の基本概念}
+\end{figure}
+
+\section{画像・画素・パッチ}
+画像は画素の格子であり，各画素はRGB等の値を持つ．CNNへ画像を入力すると，元画像より小さい格子状の特徴mapが得られる．特徴map上の各位置を\textbf{パッチ特徴}として扱うと，画像全体ではなく局所領域ごとの異常度を計算できる．
+
+\begin{KhiBox}{局所異常で重要な点}
+切粉が画像全体に対して小さい場合，画像レベルの判定が正しくても，異常mapが切粉位置へ反応しているとは限らない．したがって，Image AUROCだけでなく，Pixel AP，AUPRO，異常サイズ別Recall，FP領域を確認する必要がある．
+\end{KhiBox}
+
+\section{CNNと特徴量}
+CNNは画像から輪郭，模様，形状などを段階的に抽出する．浅い層は細かいテクスチャを保持し，深い層は意味的情報を多く含む傾向がある．PatchCoreではImageNet等で事前学習されたCNNを固定し，KHI画像を入力して得た中間特徴を利用する．これはKHI画像でCNNを再学習することとは異なる．
+
+\begin{table}[H]
+\centering
+\caption{特徴層の直感的な違い}
+\begin{tabularx}{\linewidth}{L{27mm}Y Y}
+\toprule
+層 & 得意な情報 & 注意点 \\
+\midrule
+浅い層 & エッジ，細かな質感，微小切粉 & 反射やノイズにも反応しやすい \\
+中間層 & 局所形状と質感の両方 & PatchCoreで利用しやすい \\
+深い層 & 物体の意味，広い文脈 & 微小異常が薄れる可能性 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{PatchCoreの仕組み}
+PatchCoreは，正常画像のパッチ特徴をmemory bankへ保存し，テストパッチと最も近い正常特徴との距離を異常度とする．テスト画像$x$のパッチ特徴集合を$P(x)$，正常bankを$M$とすると，代表的な画像スコアは次で表される．
+\begin{equation}
+s(x)=\max_{z_i\in P(x)}\min_{m_j\in M}\lVert z_i-m_j\rVert_2.
+\end{equation}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+ b/.style={draw=KhiBlue,fill=KhiLightBlue,rounded corners,minimum width=34mm,minimum height=10mm,align=center,font=\small},
+ a/.style={-{Latex[length=2mm]},thick,KhiBlue}
+]
+\node[b] (train) {正常train画像};
+\node[b,right=of train] (feat) {CNN特徴抽出};
+\node[b,right=of feat] (bank) {memory bank};
+\node[b,below=12mm of train] (test) {テスト画像};
+\node[b,right=of test] (q) {query特徴};
+\node[b,right=of q] (dist) {最近傍距離};
+\node[b,right=of dist] (map) {画像score\\異常map};
+\draw[a] (train)--(feat);\draw[a] (feat)--(bank);\draw[a] (test)--(q);\draw[a] (q)--(dist);\draw[a] (bank)--(dist);\draw[a] (dist)--(map);
+\end{tikzpicture}
+\caption{PatchCoreの学習時と推論時}
+\end{figure}
+
+\section{memory bankとcoreset}
+正常パッチをすべて保存すると，画像数と解像度の増加に伴いmemory bankが巨大になる．特徴数を$N$，特徴次元を$d$，float32を用いる場合，容量は概ね
+\begin{equation}
+\mathrm{Memory}\simeq 4Nd\quad[\mathrm{bytes}]
+\end{equation}
+となる．coresetは，正常特徴全体を代表する少数点を選び，bankを圧縮する方法である．
+
+\subsection{なぜ層化が必要か}
+通常のglobal coresetでは，多数派の正常外観が多く残り，稀な正常外観が消える可能性がある．例えば，明るいワークが全体の3\%しかない場合，bank圧縮後にその特徴がほとんど残らず，明るい正常画像を異常と判定する危険がある．
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+ node distance=8mm,
+ b/.style={draw=KhiBlue,fill=KhiLightBlue,rounded corners,minimum width=44mm,minimum height=11mm,align=center},
+ n/.style={draw=KhiRed,fill=KhiOrange,rounded corners,minimum width=44mm,minimum height=11mm,align=center,font=\bfseries},
+ a/.style={-{Latex[length=2mm]},thick}
+]
+\node[b] (all) {正常特徴全体};
+\node[b,below left=of all] (m1) {多数派モード};
+\node[n,below=of all] (m2) {少数正常モード};
+\node[b,below right=of all] (m3) {別設備モード};
+\node[b,below=18mm of m2] (bank) {各モードへ最低予算\\モード内coreset後に統合};
+\draw[a] (all)--(m1);\draw[a] (all)--(m2);\draw[a] (all)--(m3);\draw[a] (m1)--(bank);\draw[a] (m2)--(bank);\draw[a] (m3)--(bank);
+\end{tikzpicture}
+\caption{正常モード保存型層化coresetの考え方}
+\end{figure}
+
+\section{正常モードとは何か}
+正常モードは，同じ正常ラベルの中にある異なる外観状態である．KHI画像では，明度，反射，ワーク色，設備番号，撮影系列，孔の位置，半径方向の位置などが候補となる．
+
+\begin{table}[H]
+\centering
+\caption{正常モードの定義方法}
+\begin{tabularx}{\linewidth}{L{30mm}L{43mm}Y}
+\toprule
+方式 & 例 & 長所・注意点 \\
+\midrule
+明示属性 & \#6/\#7，明度分類，撮影日 & 解釈しやすいが，人手定義に依存 \\
+潜在cluster & PCA後k-means等 & 未知の外観差を発見できるが，clusterの意味確認が必要 \\
+hybrid & 設備別にclusterを推定 & 既知差と潜在差を両立するが，mode数が増えやすい \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{PCAとIPCA}
+PCAは，特徴のばらつきをよく表す方向を残して次元を減らす．特徴次元を$d$から$k$へ減らし，coreset率を$p$とすると，bank容量は概ね
+\begin{equation}
+\mathrm{Memory}_{\mathrm{compressed}}\simeq 4pNk
+\end{equation}
+となる．IPCAは特徴を小分けに読みながらPCAを近似するため，大規模データでRAMを抑えやすい．ただし，異常を識別する微細な方向まで削除しないよう，Pixel APやsmall-defect Recallを確認する．
+
+\section{近似最近傍探索}
+\begin{table}[H]
+\centering
+\caption{最近傍探索方式の違い}
+\begin{tabularx}{\linewidth}{L{30mm}L{34mm}Y}
+\toprule
+方式 & 特徴 & 用途 \\
+\midrule
+FlatL2 & 全点との厳密距離 & 精度基準．bankが大きいと遅い \\
+IVFFlat & 粗いclusterを選んで探索 & 速度と精度の調整が容易 \\
+HNSW & graphをたどって探索 & CPUで高速な候補 \\
+IVFPQ & 圧縮codeで検索 & 省メモリだがv1安定後に追加 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{GNNとグラフの基礎}
+グラフはノードとエッジからなる．本研究では，パッチまたは正常prototypeをノードとし，空間的に近い，特徴が近い，同じ正常モードである，極座標上で隣接する，という関係をエッジで表す．
+
+一般的なmessage passingは，ノード$i$の特徴$h_i$を周辺ノード$\mathcal{N}(i)$から更新する処理である．
+\begin{equation}
+h_i^{(l+1)}=\sigma\left(W_0h_i^{(l)}+\sum_{j\in\mathcal{N}(i)}\alpha_{ij}W_1h_j^{(l)}\right).
+\end{equation}
+周囲と整合している反射は正常，孤立した切粉は異常，という関係を利用できる可能性がある．一方，層を深くしすぎると異常特徴が周囲へ平均化されるため，本研究では1--2層を基本とする．
+
+\section{なぜ全パッチへGNNを使わないのか}
+全パッチgraphはノード数とエッジ数が多く，速度とメモリの負担が大きい．そこで，まず高速なPatchCoreで全パッチを走査し，異常度上位だけをgraphで再評価する．これは空港の全員検査と追加検査の関係に近い．
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+ b/.style={draw=KhiBlue,fill=KhiLightBlue,rounded corners,minimum width=37mm,minimum height=10mm,align=center},
+ n/.style={draw=KhiRed,fill=KhiOrange,rounded corners,minimum width=39mm,minimum height=10mm,align=center,font=\bfseries},
+ a/.style={-{Latex[length=2mm]},thick}
+]
+\node[b] (all) {全パッチ};
+\node[b,right=10mm of all] (pc) {高速PatchCore};
+\node[n,right=10mm of pc] (top) {上位$M$パッチ};
+\node[n,right=10mm of top] (g) {局所graph再評価};
+\node[b,right=10mm of g] (out) {最終異常map};
+\draw[a] (all)--(pc);\draw[a] (pc)--(top);\draw[a] (top)--(g);\draw[a] (g)--(out);
+\end{tikzpicture}
+\caption{二段階の疎graph推論}
+\end{figure}
+
+\section{評価指標の読み方}
+\begin{longtable}{L{30mm}L{42mm}Y}
+\toprule
+指標 & 何を見るか & 注意点 \\
+\midrule
+Image AUROC & 正常・異常順位の分離 & 閾値運用や異常数の不均衡を直接示さない \\
+Image AP & 異常を上位へ集める能力 & 異常数が少ない条件でAUROCより有用 \\
+Pixel AUROC & 正常画素・異常画素の順位 & 正常画素が非常に多く，高く出やすい \\
+Pixel AP & 異常画素のprecision--recall & 微小異常評価で重要 \\
+AUPRO & 異常領域ごとの重なり & 局在性能の標準指標候補 \\
+FP/1000 good & 正常1000枚当たり誤警報 & 工場停止や人手確認負荷に直結 \\
+worst-mode FPR & 最も弱い正常modeのFPR & 層化coresetの主要指標 \\
+p95 latency & 95\%画像が収まる時間 & 平均より工場タクト評価に向く \\
+\bottomrule
+\end{longtable}
+
+\section{データリーク}
+データリークとは，本来見てはいけないtest情報を学習や設定選択に利用することである．同じ撮影系列の類似画像がtrainとtestへ分かれた場合も，見かけ上高い性能になる危険がある．
+\begin{itemize}
+  \item PCA fit，normal mode推定，memory bankはtrain goodだけで行う．
+  \item 閾値とOptunaの目的値はvalidationで決める．
+  \item testは最終条件を決めた後に一度だけ評価する．
+  \item SHA-256とgroup keyで重複・系列混入を確認する．
+\end{itemize}
+
+\section{高速化の考え方}
+PythonをC++へ変える前に，どこが遅いかを計測する．CNN，FAISS，OpenCV，NumPyの主要演算は内部でC/C++やCUDAを利用するため，Pythonで呼んでも計算本体は高速である場合が多い．
+
+高速化の優先順位は，計算対象を減らす，bank数を減らす，特徴次元を減らす，ANNを使う，GNN対象を減らす，推論backendを最適化する，最後に必要部分だけC++化する，の順が基本である．
+
+\begin{table}[H]
+\centering
+\caption{工場推論の候補構成}
+\begin{tabularx}{\linewidth}{L{37mm}Y Y}
+\toprule
+構成 & 長所 & 適用時期 \\
+\midrule
+Python + PyTorch & 研究実装が速い & baseline・手法開発 \\
+Python + ONNX Runtime & CPU/GPUで移植しやすい & モデル確定後 \\
+Python + OpenVINO & Intel CPU最適化候補 & 工場CPU評価 \\
+TensorRT & NVIDIA GPUで高速 & GPU導入時 \\
+C++ + runtime & 制御統合・低jitter & Python版が要件未達の場合のみ \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{実験ログの読み方}
+実験が成功したかは，最後のAUROCだけで判断しない．次を順に確認する．
+\begin{enumerate}
+  \item 画像枚数，正常・異常枚数，GT対応数は意図どおりか．
+  \item 使用した設定，seed，device，解像度，bank数は何か．
+  \item 各ステージはSUCCESS，CACHED，SKIPPED，FAILEDのどれか．
+  \item Image/Pixel指標とFP/FNはどうか．
+  \item 異常mapは実際の切粉へ反応しているか．
+  \item どの正常モードで誤検知したか．
+  \item 総時間と各工程時間，RAM，GPU memoryはどうか．
+\end{enumerate}
+
+\section{研究を進める順序}
+\begin{enumerate}
+  \item PatchCore baselineを再現する．
+  \item KHI正常画像の特徴を整理する．
+  \item 正常モードが本当に存在するか確認する．
+  \item global coresetで少数モードが消えるか測る．
+  \item 層化coresetだけを比較する．
+  \item graphだけを比較する．
+  \item 両者を統合する．
+  \item 精度を保ったまま軽量化する．
+  \item \#6，\#7，公開金属データへ展開する．
+\end{enumerate}
+
+\begin{thebibliography}{99}
+\bibitem{patchcore} K. Roth et al., ``Towards Total Recall in Industrial Anomaly Detection,'' CVPR, 2022.
+\bibitem{softpatch} X. Jiang et al., ``SoftPatch: Unsupervised Anomaly Detection with Noisy Data,'' NeurIPS, 2022.
+\bibitem{graphsage} W. Hamilton et al., ``Inductive Representation Learning on Large Graphs,'' NeurIPS, 2017.
+\bibitem{efficientad} K. Batzner et al., ``EfficientAD: Accurate Visual Anomaly Detection at Millisecond-Level Latencies,'' WACV, 2024.
+\end{thebibliography}
+\end{document}
