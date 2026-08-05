@@ -6,6 +6,10 @@ on:
     paths:
       - 'artifacts/khi_research_latex_v2_20260805/**'
       - '.github/workflows/build-khi-research-latex-v2.yml'
+  pull_request:
+    paths:
+      - 'artifacts/khi_research_latex_v2_20260805/**'
+      - '.github/workflows/build-khi-research-latex-v2.yml'
 
 permissions:
   contents: read
