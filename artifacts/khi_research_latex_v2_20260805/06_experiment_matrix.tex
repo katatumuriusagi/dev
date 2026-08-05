@@ -1,0 +1,280 @@
+\documentclass[a4paper,11pt]{ltjsarticle}
+\usepackage{khi-common}
+\usepackage{pdflscape}
+\begin{document}
+\KhiTitle{実験マトリクス}{正常モード保存型層化コアセット・疎グラフPatchCore}{v2.0}
+
+\section{目的}
+本資料は，研究仮説を検証可能な順序へ分解し，各実験の変更因子，固定条件，評価指標，成功gate，推定時間を定義する．層化coresetとgraphを最初から同時に変更せず，単独効果を確認した後に統合する．
+
+\section{共通固定条件}
+初期段階では次を固定する．
+\begin{itemize}
+  \item データ：KHI \#6，\#7のgroup-aware split，重複除去済みmanifest．
+  \item backbone：ImageNet事前学習WideResNet50-2，layer2+layer3．
+  \item 入力：256+512の多解像度，平均融合．
+  \item pooling：average，kernel 3，stride 1，padding 1．
+  \item 距離：squared L2，$k=1$．
+  \item 閾値：validation goodの固定percentile．
+  \item 主要比較：同一bankベクトル数，同一特徴次元．
+  \item 最終結果：3 seed以上，FP/FN代表画像を保存．
+\end{itemize}
+
+\section{研究全体の段階}
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+ p/.style={draw=KhiBlue,fill=KhiLightBlue,rounded corners,minimum width=24mm,minimum height=10mm,align=center,font=\small},
+ n/.style={draw=KhiRed,fill=KhiOrange,rounded corners,minimum width=27mm,minimum height=10mm,align=center,font=\small\bfseries},
+ a/.style={-{Latex[length=2mm]},thick}
+]
+\node[p] (p0) {P0\\要件・分割};
+\node[p,right=5mm of p0] (p1) {P1\\baseline};
+\node[n,right=5mm of p1] (p2) {P2\\正常mode};
+\node[n,right=5mm of p2] (p3) {P3\\層化bank};
+\node[n,below=8mm of p3] (p4) {P4\\graph単独};
+\node[n,left=5mm of p4] (p5) {P5\\統合};
+\node[p,left=5mm of p5] (p6) {P6\\軽量化};
+\node[p,left=5mm of p6] (p7) {P7\\一般化};
+\draw[a] (p0)--(p1);\draw[a] (p1)--(p2);\draw[a] (p2)--(p3);\draw[a] (p3)--(p4);\draw[a] (p4)--(p5);\draw[a] (p5)--(p6);\draw[a] (p6)--(p7);
+\end{tikzpicture}
+\caption{実験の進行順序}
+\end{figure}
+
+\section{Phase 0：要件・データ監査}
+\begin{table}[H]
+\centering\small
+\caption{Phase 0実験}
+\begin{tabularx}{\linewidth}{L{17mm}L{38mm}Y L{38mm}}
+\toprule
+ID & 実施内容 & 出力 & 完了gate \\
+\midrule
+P0-01 & 工場PC・タクト・RAM・GPU要件確認 & deployment requirements & 未確定値を明示し担当者確認へ回す \\
+P0-02 & image ID・group key・SHA-256生成 & dataset manifest & 全画像一意，重複一覧完成 \\
+P0-03 & train/validation/test分割 & split manifest & group leakage 0件 \\
+P0-04 & GT監査 & mask report & 対応率100\%，空GT 0件 \\
+P0-05 & KHI \#6/\#7正常統計 & statistics/figures & 明度・色・ROI差を可視化 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+推定時間はデータ走査とGT確認を含め数時間から1日程度である．画像数とストレージ速度に依存するため，初回は実測を優先する．
+
+\section{Phase 1：baseline再現}
+\begin{table}[H]
+\centering\small
+\caption{Phase 1実験}
+\begin{tabularx}{\linewidth}{L{17mm}L{43mm}L{38mm}Y}
+\toprule
+ID & 変更因子 & 固定条件 & 主要評価 \\
+\midrule
+P1-01 & Original PatchCore相当 & 256，global bank & Image/Pixel指標，bank数 \\
+P1-02 & Saiku 256 & layer2+3 & Image/Pixel指標，時間 \\
+P1-03 & Saiku 512 & 同上 & 微小異常Recall \\
+P1-04 & Saiku 256+512 mean & 同上 & 多解像度効果 \\
+P1-05 & fusion max & 同一特徴・bank & meanとの比較 \\
+P1-06 & FlatL2対IVFFlat & 同一bank & score順位相関，速度 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+\textbf{gate：}基準コードとの差がImage/Pixel AUROCで0.001以内，評価画像数・ラベル・出力形状が一致すること．推定時間は小規模再現で数十分，全量条件で数時間程度であるが，過去ログを基に更新する．
+
+\section{Phase 2：正常モードの存在確認}
+\begin{landscape}
+\begin{longtable}{L{18mm}L{42mm}L{45mm}L{45mm}L{45mm}}
+\caption{Phase 2実験マトリクス}\\
+\toprule
+ID & mode定義 & 変更因子 & 固定条件 & 判定指標 \\
+\midrule
+\endfirsthead
+\toprule
+ID & mode定義 & 変更因子 & 固定条件 & 判定指標 \\
+\midrule
+\endhead
+P2-01 & modeなし & 全正常を1群 & baseline特徴 & global coreset coverage \\
+P2-02 & 既存特徴分類 & black/gray/bright等 & 同一特徴 & mode別画像数・FPR \\
+P2-03 & machine ID & \#6/\#7 & 同一特徴 & 設備間距離・転移 \\
+P2-04 & 明度bin & 3分位・5分位 & ROI統計固定 & FPRとの相関 \\
+P2-05 & image PCA+k-means & $K=3$ & seed固定 & silhouette，ARI，代表画像 \\
+P2-06 & image PCA+k-means & $K=5$ & 同上 & 同上 \\
+P2-07 & image PCA+k-means & $K=8$ & 同上 & tiny mode率，安定性 \\
+P2-08 & hybrid & machine別$K=3$ & 同上 & mode解釈性・coverage \\
+P2-09 & hybrid & machine別$K=5$ & 同上 & 同上 \\
+P2-10 & patch latent mode & 固定sample cluster & 画像別上限 & patch代表性，計算量 \\
+\bottomrule
+\end{longtable}
+\end{landscape}
+\textbf{gate：}少なくとも一つのmode定義でseed間ARIが安定し，代表画像に視覚的一貫性があり，global coresetのcoverageまたはFPRにmode差が確認されること．確認できない場合は層化仮説を再検討する．
+
+\section{Phase 3：層化coreset単独評価}
+\begin{landscape}
+\begin{longtable}{L{18mm}L{40mm}L{35mm}L{40mm}L{45mm}L{45mm}}
+\caption{Phase 3実験マトリクス}\\
+\toprule
+ID & sampler & 予算配分 & bank率 & 固定条件 & 主要評価 \\
+\midrule
+\endfirsthead
+\toprule
+ID & sampler & 予算配分 & bank率 & 固定条件 & 主要評価 \\
+\midrule
+\endhead
+P3-01 & random & global & 1\% & mode未使用 & 基準速度・分散 \\
+P3-02 & greedy coreset & global & 1\% & 同一bank数 & Image/Pixel，coverage \\
+P3-03 & k-means & global & 1\% & 同一bank数 & centroidの平滑化影響 \\
+P3-04 & mode内greedy & 比例 & 1\% & mode定義固定 & mode別FPR \\
+P3-05 & mode内greedy & 均等 & 1\% & 同上 & rare mode保護，多数派劣化 \\
+P3-06 & mode内greedy & 平方根 & 1\% & 同上 & Pareto比較 \\
+P3-07 & mode内greedy & 最低保証+比例 & 1\% & 同上 & worst-mode FPR \\
+P3-08 & mode内greedy & 最低保証+平方根 & 1\% & 同上 & 主提案候補 \\
+P3-09 & P3-02/08上位 & 同上 & 0.5\% & 同一特徴次元 & 強圧縮時性能 \\
+P3-10 & P3-02/08上位 & 同上 & 2.5\% & 同上 & bank増加効果 \\
+P3-11 & P3-02/08上位 & 同上 & 5\% & 同上 & 精度上限・時間 \\
+\bottomrule
+\end{longtable}
+\end{landscape}
+\textbf{gate：}同一bank数でglobal greedy以上のImage APを維持し，worst-mode FPRまたはFP/1000 goodを20--30\%以上低減すること．改善が平均値だけでrare modeへ寄与しない場合は不採用とする．
+
+\section{Phase 4：graph単独評価}
+\begin{landscape}
+\begin{longtable}{L{18mm}L{37mm}L{37mm}L{37mm}L{42mm}L{42mm}}
+\caption{Phase 4実験マトリクス}\\
+\toprule
+ID & graph方式 & edge & query選択 & 固定条件 & 主要評価 \\
+\midrule
+\endfirsthead
+\toprule
+ID & graph方式 & edge & query選択 & 固定条件 & 主要評価 \\
+\midrule
+\endhead
+P4-01 & graphなし & -- & -- & global coreset & baseline \\
+P4-02 & Laplacian & feature-kNN & 全patch & 同一bank & 精度上限・時間 \\
+P4-03 & Laplacian & feature-kNN & 上位1\% & 同上 & sparse効果 \\
+P4-04 & Laplacian & feature+spatial & 上位5\% & 同上 & 局所関係 \\
+P4-05 & Laplacian & feature+polar & 上位5\% & 極座標条件 & 周期境界 \\
+P4-06 & GraphSAGE 1層 & feature-kNN & $M=32$ & global bank & Pixel AP・時間 \\
+P4-07 & GraphSAGE 1層 & feature+spatial & $M=64$ & 同上 & FP/FN \\
+P4-08 & GraphSAGE 2層 & feature+spatial & $M=64$ & 同上 & oversmoothing確認 \\
+P4-09 & GAT 1層 & feature+spatial & $M=64$ & 同上 & attention効果 \\
+P4-10 & 上位方式 & cross-scale追加 & $M=64$ & 256+512 & 多解像度関係 \\
+\bottomrule
+\end{longtable}
+\end{landscape}
+\textbf{gate：}Image性能を維持し，Pixel APまたはAUPROを2--3ポイント以上改善する，またはFP領域を明確に減らすこと．疎graph追加時間は総時間の20\%以下を目標とする．
+
+\section{Phase 5：統合手法}
+\begin{table}[H]
+\centering\small
+\caption{Phase 5主要アブレーション}
+\begin{tabular}{lccccl}
+\toprule
+ID & 層化bank & graph & sparse & mode属性node & 目的 \\
+\midrule
+P5-01 & -- & -- & -- & -- & PatchCore baseline \\
+P5-02 & ○ & -- & -- & -- & 層化単独 \\
+P5-03 & -- & ○ & -- & -- & 全patch graph \\
+P5-04 & -- & ○ & ○ & -- & 疎graph単独 \\
+P5-05 & ○ & ○ & -- & ○ & 統合・全patch \\
+P5-06 & ○ & ○ & ○ & ○ & 主提案 \\
+P5-07 & ○ & ○ & ○ & -- & mode属性の寄与 \\
+P5-08 & ○ & Laplacian & ○ & ○ & 学習不要版 \\
+\bottomrule
+\end{tabular}
+\end{table}
+\textbf{gate：}P5-06が同一bank予算でaccuracy--latency--memoryのPareto front上にあり，層化とgraphの各寄与がアブレーションで説明できること．
+
+\section{Phase 6：軽量化・backend比較}
+\begin{landscape}
+\begin{longtable}{L{18mm}L{40mm}L{42mm}L{45mm}L{55mm}}
+\caption{Phase 6実験マトリクス}\\
+\toprule
+ID & 軽量化要素 & 候補 & 固定条件 & 成功基準 \\
+\midrule
+\endfirsthead
+\toprule
+ID & 軽量化要素 & 候補 & 固定条件 & 成功基準 \\
+\midrule
+\endhead
+P6-01 & 次元削減 & PCA 128/256/512 & P5最良bank/graph & 精度低下1pt以内でbank削減 \\
+P6-02 & 次元削減 & IPCA 128/256/512 & 同上 & peak RAM削減 \\
+P6-03 & ANN & Flat/IVF/HNSW & 同一bank & recall@NN，速度 \\
+P6-04 & 解像度 & 256/384/512/256+512 & 同一モデル & small defect Recallを維持 \\
+P6-05 & backbone & WRN50/ResNet18/MobileNet系 & 同一入力 & p95とPixel APのPareto \\
+P6-06 & precision & FP32/FP16 & GPU条件 & score順位・閾値影響 \\
+P6-07 & runtime & PyTorch eager/compile & 同一重み & end-to-end p95 \\
+P6-08 & runtime & ONNX Runtime CPU & 同一CNN出力 & CPU速度・差分 \\
+P6-09 & runtime & OpenVINO CPU & Intel CPU & p95，RAM \\
+P6-10 & runtime & TensorRT FP16 & NVIDIA GPU & 低遅延 \\
+\bottomrule
+\end{longtable}
+\end{landscape}
+\textbf{gate：}精度低下0.5--1ポイント以内で2倍以上高速化，または同等速度でbank容量50\%以上削減を有望条件とする．
+
+\section{Phase 7：一般化評価}
+\begin{table}[H]
+\centering\small
+\caption{Phase 7実験}
+\begin{tabularx}{\linewidth}{L{17mm}L{47mm}L{40mm}Y}
+\toprule
+ID & train/bank構築 & test & 目的 \\
+\midrule
+P7-01 & KHI \#6 & KHI \#6 & 設備内性能 \\
+P7-02 & KHI \#7 & KHI \#7 & 設備内性能 \\
+P7-03 & KHI \#6 & KHI \#7 & 設備間転移 \\
+P7-04 & KHI \#7 & KHI \#6 & 設備間転移 \\
+P7-05 & KHI \#6+\#7 & 各設備 & 統合bank \\
+P7-06 & MPDDカテゴリ別正常 & 同カテゴリtest & 金属製品一般化 \\
+P7-07 & MVTec AD 2金属系 & 公式test & 難条件評価 \\
+P7-08 & 複数金属カテゴリ & 未知カテゴリ & 将来のmulti-product検討 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+主要ハイパーパラメータをデータセットごとに過剰調整せず，製品ごとにbank再構築のみを許す設定と，validationで限定調整する設定を分ける．
+
+\section{最適化の投入時期}
+Optuna等の自動探索はPhase 3とPhase 4の単独効果を確認後に使用する．探索対象は各Phaseで限定し，次を固定する．
+\begin{itemize}
+  \item Phase 3：mode定義，予算配分，bank率．
+  \item Phase 4：edge，top-$M$，graph層数，融合係数．
+  \item Phase 6：次元，index，backend．
+\end{itemize}
+最終testは探索中に表示しない．低忠実度subsetの順位と全量順位の相関を記録する．
+
+\section{各実験で必ず残す情報}
+\begin{itemize}
+  \item 目的，研究質問，仮説，変更因子，固定因子，根拠論文．
+  \item train/validation/test枚数，group，manifest hash，GT version．
+  \item backbone，解像度，特徴層，reducer，mode version，bank割当，graph定義．
+  \item Image/Pixel指標，mode別FPR，異常サイズ別Recall．
+  \item bank数，特徴次元，index容量，p50/p95/p99，peak RAM/GPU memory．
+  \item TP/FP/FN/TN代表画像，異常map，失敗理由，次実験．
+\end{itemize}
+
+\section{実験停止・継続基準}
+\begin{table}[H]
+\centering
+\caption{段階gate}
+\begin{tabularx}{\linewidth}{L{25mm}Y Y}
+\toprule
+段階 & 継続条件 & 停止・再設計条件 \\
+\midrule
+P1 & baseline再現成功 & 出力・評価不一致 \\
+P2 & 安定modeとFPR/coverage差を確認 & modeが不安定，意味不明 \\
+P3 & rare mode FPR改善 & 平均だけ改善しrare mode悪化 \\
+P4 & 局在改善またはFP領域減少 & graphが平滑化しFN増加 \\
+P5 & Pareto改善 & 相乗効果なし・時間過大 \\
+P6 & 精度維持で速度/容量改善 & 小切粉Recallの大幅低下 \\
+P7 & 複数金属データで傾向再現 & KHI固有調整のみで改善 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{直近に実施する実験}
+直近はP0，P1，P2を完了させる．特に，KHI正常画像に安定した複数正常モードが存在し，global coresetでrare mode coverageが低下しているかを確認する．この事実が確認される前にGNN統合へ進まない．
+
+\begin{thebibliography}{99}
+\bibitem{patchcore} K. Roth et al., ``Towards Total Recall in Industrial Anomaly Detection,'' CVPR, 2022.
+\bibitem{softpatch} X. Jiang et al., ``SoftPatch: Unsupervised Anomaly Detection with Noisy Data,'' NeurIPS, 2022.
+\bibitem{pni} J. Bae et al., ``PNI: Industrial Anomaly Detection using Position and Neighborhood Information,'' ICCV, 2023.
+\bibitem{efficientad} K. Batzner et al., ``EfficientAD: Accurate Visual Anomaly Detection at Millisecond-Level Latencies,'' WACV, 2024.
+\bibitem{tailedcore} J. Jung et al., ``TailedCore: Few-Shot Sampling for Unsupervised Long-Tail Noisy Anomaly Detection,'' CVPR, 2025.
+\end{thebibliography}
+\end{document}
