@@ -1,0 +1,163 @@
+\documentclass[a4paper,11pt]{ltjsarticle}
+\usepackage{khi-common}
+\begin{document}
+\KhiTitle{先行研究整理}{PatchCore改良・long-tail normality・GNN・高速化}{v2.0}
+
+\section{整理方針}
+本資料は，本研究の新規性を明確にするため，PatchCore系異常検知を「特徴抽出」「memory bank」「位置・関係性」「高速化」「現実的データ条件」の観点から整理するものである．査読済み国際会議・ジャーナルを優先し，preprintは将来候補として区別する．
+
+\section{PatchCoreとmemory bank系手法}
+\subsection{PatchCore}
+PatchCoreは，ImageNet事前学習CNNの中間特徴を局所patchとして抽出し，正常特徴の代表集合をcoresetとして保持する．推論時はquery patchとmemory bankの最近傍距離を用いる．学習を必要とせず，高い局在性能を示した点が重要である．一方，bankの代表性，データ量増加時の容量，位置関係の弱さが改良対象となる．
+
+\subsection{SoftPatch}
+SoftPatchは，正常学習データへ異常・外れ値が混入する条件を扱い，patch-level outlier scoreに基づいてbankを浄化・重み付けする．本研究の課題は「異常混入の除去」ではなく「稀だが正常なmodeの保護」であり，方向性は異なる．ただし，normal modeを誤って外れ値として除外しない設計を考える上で重要な比較対象である．
+
+\subsection{TailedCore}
+TailedCoreは，long-tailかつnoisyなmulti-class異常検知条件におけるfew-shot samplingを扱う．少数クラスの代表性を補う考え方は，本研究の層化coresetに近い．差別化点は，本研究が製品クラス間ではなく，\textbf{同一金属製品内の明度・反射・設備・位置などの正常モード不均衡}を対象とする点である．
+
+\section{位置・近傍・関係性を利用する研究}
+\subsection{PNI}
+PNIは，位置情報と近傍情報を工業異常検知へ導入する．したがって，単にpatch座標を特徴へ加える，または周辺patchを参照するだけでは新規性が弱い．本研究では，層化bank内のmode属性，極座標周期境界，query-selectiveな疎graphを統合する必要がある．
+
+\subsection{Vision GNN・GraphSAGE・GAT}
+Vision GNN系は画像patchをnodeとして扱う一般的枠組みを示している．GraphSAGEは近傍sampleとaggregationによるinductive表現学習を行い，新しいquery nodeを扱いやすい．GATは近傍ごとの重要度をattentionで学習できる．一方，全patch graphは計算量が大きく，微小異常を周辺特徴で平滑化する危険がある．
+
+\begin{table}[H]
+\centering
+\caption{graph方式の比較}
+\begin{tabularx}{\linewidth}{L{32mm}L{40mm}Y}
+\toprule
+方式 & 長所 & 本研究での位置づけ \\
+\midrule
+Graph Laplacian & 学習不要で関係的不整合を計算可能 & 最初のgraph baseline \\
+GCN & 実装が単純 & 全patch平滑化に注意 \\
+GraphSAGE & inductive，近傍sample可能 & 疎graphの第一候補 \\
+GAT & 重要な近傍を選択可能 & 速度・安定性確認後の候補 \\
+GIN & 高い表現力 & 初期検証後の追加候補 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{特徴適応・foundation model系}
+\subsection{ReConPatch}
+ReConPatchは，事前学習特徴を対象domainへ適応させることで，patch表現の識別性を改善する．これは固定backbone特徴をそのまま使うPatchCoreの弱点を補う方向である．本研究では，まずbank構築とgraphの効果を固定backbone上で確認し，その後の追加比較とする．
+
+\subsection{AnomalyDINOとDinomaly}
+AnomalyDINOはDINOv2特徴をfew-shot anomaly detectionへ利用し，少数正常画像でも強い表現を得る方向を示す．Dinomalyはmulti-class unsupervised anomaly detectionを簡潔なTransformer構成で扱う．これらはbackbone表現の強化に関する研究であり，本研究のbank allocationやsparse graphとは直交する．したがって，将来のbackbone差し替え候補であるが，v1 baseline安定前には導入しない．
+
+\subsection{DFM}
+DFMはfeature matchingを微分可能な形で統合し，feature extractionとmatchingをend-to-endに最適化する．異常ラベルやGTを使って特徴を学習するだけでは新規ではないことを示す重要な比較対象である．本研究が教師ありadapterへ進む場合は，one-class一般化を維持する新しい制約が必要である．
+
+\section{高速・省資源異常検知}
+\subsection{EfficientAD}
+EfficientADはmillisecond-level latencyを中心的な研究課題として扱い，軽量teacher--student構成で高速な異常検知を実現する．高速化論文では，精度だけでなく，入力解像度，batch size，device，warm-up，前後処理，p95 latency，memoryを明示する必要があることを示す．
+
+\subsection{次元削減とANN}
+PatchCoreのmemory bank容量は特徴数$N$と次元$d$に概ね比例する．PCA/IPCA，coreset，HNSW，FAISS IVF/PQは独立した高速化要素である．ただし，t-SNEやUMAPは可視化には有用でも，距離構造を変えるため主推論空間へ直接用いる場合は慎重さが必要である．
+
+\begin{equation}
+\mathrm{Memory}\simeq 4Nd,\qquad
+\mathrm{Memory}_{\mathrm{compressed}}\simeq 4pNk,
+\end{equation}
+ここで$p$はcoreset率，$k$は削減後次元である．
+
+\section{現実的データ条件と評価}
+\subsection{MVTec ADからMVTec AD 2へ}
+MVTec ADは工業異常検知の標準benchmarkであるが，近年は性能飽和が指摘される．MVTec AD 2は照明変化，高分散正常外観，微小欠陥など，より難しい条件を含む．本研究の正常モード保存と微小局所在り方を評価する上で重要である．
+
+\subsection{Real-IAD・MPDD}
+Real-IADはmulti-viewかつ大規模な実工業条件を扱う．MPDDは金属部品を中心とするため，KHI以外の金属製品への一般化評価に適している．全量評価が重い場合は，金属系カテゴリを事前登録して段階的に実施する．
+
+\section{主要先行研究の比較}
+\begin{longtable}{L{30mm}L{25mm}L{37mm}L{47mm}}
+\toprule
+手法 & 年・会議 & 主な貢献 & 本研究との差・利用方法 \\
+\midrule
+PatchCore & 2022 CVPR & coreset memory bankと最近傍patch matching & baseline．bank代表性と関係性を改良対象とする \\
+SoftPatch & 2022 NeurIPS & noisy normal dataへの頑健化 & 異常除去ではなくrare normal保護へ焦点を移す \\
+PNI & 2023 ICCV & 位置・近傍情報の利用 & 単純な位置付与との差別化が必要 \\
+EfficientAD & 2024 WACV & 高精度・低遅延 & 工場速度評価の比較基準 \\
+ReConPatch & 2024 WACV & patch特徴のdomain適応 & backbone適応の比較候補 \\
+AnomalyDINO & 2025 WACV & DINOv2 few-shot特徴 & v2以降のbackbone候補 \\
+TailedCore & 2025 CVPR & long-tail noisy条件のsampling & class間ではなく同一製品内mode不均衡を扱う \\
+Dinomaly & 2025 CVPR & multi-class unsupervised AD & 簡潔な統一モデルとの比較候補 \\
+DFM & 2025 CVPR & differentiable feature matching & 教師あり特徴学習との差別化に必要 \\
+\bottomrule
+\end{longtable}
+
+\section{研究gap}
+既存研究から，以下は単独では新規性になりにくい．
+\begin{itemize}
+  \item PatchCoreへPCA，HNSW，FAISS，GNNを追加するだけ．
+  \item DINOv2へbackboneを置き換えるだけ．
+  \item 正常・異常GTでCNNをfine-tuningするだけ．
+  \item 極座標位置を特徴へ加えるだけ．
+\end{itemize}
+
+本研究のgapは，次の三点を一つの問題設定として扱うことである．
+\begin{enumerate}
+  \item 同一製品内のrare normal modeをbank圧縮時に保護する．
+  \item mode属性を持つprototype graphとquery patchの関係的不整合を使う．
+  \item 全patchではなく疑わしいpatchだけを再評価し，工場速度を維持する．
+\end{enumerate}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+ b/.style={draw=KhiBlue,fill=KhiLightBlue,rounded corners,minimum width=46mm,minimum height=12mm,align=center},
+ n/.style={draw=KhiRed,fill=KhiOrange,rounded corners,minimum width=52mm,minimum height=12mm,align=center,font=\bfseries},
+ a/.style={-{Latex[length=2.5mm]},thick}
+]
+\node[b] (l) {long-tail / noisy研究\\class間・汚染対策};
+\node[b,right=18mm of l] (p) {position / graph研究\\関係性利用};
+\node[b,below=16mm of l] (e) {efficient AD研究\\速度・容量};
+\node[n,below=16mm of p] (ours) {本研究\\同一製品内rare normal保護\\+ query-selective sparse graph};
+\draw[a] (l)--(ours);\draw[a] (p)--(ours);\draw[a] (e)--(ours);
+\end{tikzpicture}
+\caption{先行研究群と本研究の位置づけ}
+\end{figure}
+
+\section{査読で求められる実験}
+\begin{itemize}
+  \item Original PatchCore，global coreset，層化coreset，graph単独，統合手法のアブレーション．
+  \item 同一bank数・同一特徴次元・同一backboneでの公平比較．
+  \item Image AUROCだけでなくPixel AP，AUPRO，FP/1000，worst-mode FPR．
+  \item KHI \#6，\#7，設備間転移，公開金属データでの評価．
+  \item 3 seed以上，信頼区間，FP/FN代表画像，異常サイズ別評価．
+  \item end-to-end p50/p95/p99，RAM，bank/index容量，実行環境．
+\end{itemize}
+
+\section{本研究での採用優先度}
+\begin{table}[H]
+\centering
+\caption{先行研究要素の導入順序}
+\begin{tabularx}{\linewidth}{C{15mm}L{37mm}Y}
+\toprule
+優先度 & 要素 & 理由 \\
+\midrule
+A & PatchCore baseline・global coreset & 新規要素の効果測定に必須 \\
+A & 正常モード解析・層化coreset & 研究仮説の中心 \\
+A & Graph Laplacian / 1層GraphSAGE & 軽量な関係性評価 \\
+A & p95 latency・bank容量 & 工場導入軸 \\
+B & IPCA・HNSW・ONNX/OpenVINO & 提案効果確認後の軽量化 \\
+C & DINOv2・GAT・IVFPQ & baseline安定後の拡張 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{thebibliography}{99}
+\bibitem{patchcore} K. Roth et al., ``Towards Total Recall in Industrial Anomaly Detection,'' CVPR, 2022.
+\bibitem{softpatch} X. Jiang et al., ``SoftPatch: Unsupervised Anomaly Detection with Noisy Data,'' NeurIPS, 2022.
+\bibitem{pni} J. Bae et al., ``PNI: Industrial Anomaly Detection using Position and Neighborhood Information,'' ICCV, 2023.
+\bibitem{efficientad} K. Batzner et al., ``EfficientAD: Accurate Visual Anomaly Detection at Millisecond-Level Latencies,'' WACV, 2024.
+\bibitem{reconpatch} H. Hyun et al., ``ReConPatch: Contrastive Patch Representation Learning for Industrial Anomaly Detection,'' WACV, 2024.
+\bibitem{anomalydino} T. Damm et al., ``AnomalyDINO: Boosting Patch-Based Few-Shot Anomaly Detection with DINOv2,'' WACV, 2025.
+\bibitem{tailedcore} J. Jung et al., ``TailedCore: Few-Shot Sampling for Unsupervised Long-Tail Noisy Anomaly Detection,'' CVPR, 2025.
+\bibitem{dinomaly} Y. Guo et al., ``Dinomaly: The Less Is More Philosophy in Multi-Class Unsupervised Anomaly Detection,'' CVPR, 2025.
+\bibitem{dfm} J. Wu et al., ``DFM: Differentiable Feature Matching for Anomaly Detection,'' CVPR, 2025.
+\bibitem{graphsage} W. Hamilton et al., ``Inductive Representation Learning on Large Graphs,'' NeurIPS, 2017.
+\bibitem{gat} P. Veli\v{c}kovi\'c et al., ``Graph Attention Networks,'' ICLR, 2018.
+\bibitem{mvtec} P. Bergmann et al., ``MVTec AD -- A Comprehensive Real-World Dataset for Unsupervised Anomaly Detection,'' CVPR, 2019.
+\end{thebibliography}
+\end{document}
