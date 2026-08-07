@@ -24,8 +24,9 @@ jobs:
         run: |
           sed -i 's/{1zw}/{1em}/g' khi_roi_patchcore_code_reading_report.tex
           sed -i 's/self\._hook/self\\_hook/g' khi_roi_patchcore_code_reading_report.tex
-          sed -i 's/{L{44mm} Y}/{L{68mm} Y}/g' khi_roi_patchcore_code_reading_report.tex
+          sed -i 's/{L{44mm} Y}/{L{75mm} Y}/g' khi_roi_patchcore_code_reading_report.tex
           sed -i 's/\\begin{tikzpicture}\[node distance=8mm\]/\\begin{tikzpicture}[node distance=5mm,scale=0.82,transform shape]/g' khi_roi_patchcore_code_reading_report.tex
+          sed -i 's/\\begin{tikzpicture}\[node distance=10mm\]/\\begin{tikzpicture}[node distance=5mm,scale=0.72,transform shape]/g' khi_roi_patchcore_code_reading_report.tex
 
       - name: Compile LuaLaTeX
         working-directory: artifacts/khi_code_reading_report_20260807
