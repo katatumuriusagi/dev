@@ -1,0 +1,43 @@
+name: Build KHI Code Reading Report
+
+on:
+  pull_request:
+    paths:
+      - "artifacts/khi_code_reading_report_20260807/**"
+      - ".github/workflows/build-khi-code-reading-report.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install TeX and renderer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y texlive-luatex texlive-lang-japanese texlive-latex-extra texlive-pictures texlive-science latexmk poppler-utils fonts-noto-cjk
+
+      - name: Compile LuaLaTeX
+        working-directory: artifacts/khi_code_reading_report_20260807
+        run: |
+          latexmk -lualatex -interaction=nonstopmode -halt-on-error khi_roi_patchcore_code_reading_report.tex
+          pdfinfo khi_roi_patchcore_code_reading_report.pdf
+
+      - name: Render pages for QA
+        working-directory: artifacts/khi_code_reading_report_20260807
+        run: |
+          mkdir -p preview
+          pdftoppm -png -r 120 khi_roi_patchcore_code_reading_report.pdf preview/page
+
+      - name: Package deliverables
+        run: |
+          cd artifacts
+          zip -r khi_code_reading_report_20260807.zip khi_code_reading_report_20260807/khi_roi_patchcore_code_reading_report.pdf khi_code_reading_report_20260807/khi_roi_patchcore_code_reading_report.tex khi_code_reading_report_20260807/preview
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: khi-code-reading-report
+          path: artifacts/khi_code_reading_report_20260807.zip
