@@ -1,0 +1,1 @@
+Final rebuild trigger after tightening the memory bank diagram and filename table.
