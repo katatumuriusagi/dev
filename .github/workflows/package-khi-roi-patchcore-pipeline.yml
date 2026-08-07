@@ -7,6 +7,10 @@ on:
     paths:
       - "artifacts/khi_roi_patchcore_pipeline_20260807/**"
       - ".github/workflows/package-khi-roi-patchcore-pipeline.yml"
+  pull_request:
+    paths:
+      - "artifacts/khi_roi_patchcore_pipeline_20260807/**"
+      - ".github/workflows/package-khi-roi-patchcore-pipeline.yml"
   workflow_dispatch:
 
 jobs:
