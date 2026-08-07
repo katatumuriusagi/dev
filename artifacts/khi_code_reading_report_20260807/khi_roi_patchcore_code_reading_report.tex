@@ -1,0 +1,950 @@
+\documentclass[a4paper,11pt]{ltjsreport}
+
+\usepackage{luatexja-fontspec}
+\usepackage{geometry}
+\geometry{top=20mm,bottom=22mm,left=22mm,right=22mm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,calc,matrix}
+\usepackage[most]{tcolorbox}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{url}
+\usepackage{siunitx}
+
+\definecolor{MainBlue}{HTML}{1F4E79}
+\definecolor{SubBlue}{HTML}{DCE6F1}
+\definecolor{LightGray}{HTML}{F4F6F8}
+\definecolor{LightGreen}{HTML}{E2F0D9}
+\definecolor{LightOrange}{HTML}{FCE4D6}
+\definecolor{WarnRed}{HTML}{C00000}
+\definecolor{CodeBlue}{HTML}{0B5394}
+\definecolor{CodeGreen}{HTML}{38761D}
+
+\hypersetup{colorlinks=true,linkcolor=MainBlue,urlcolor=MainBlue,citecolor=MainBlue}
+\setlength{\parindent}{1zw}
+\setlength{\parskip}{0.25em}
+\renewcommand{\arraystretch}{1.25}
+\setlist[itemize]{leftmargin=2.2em,itemsep=0.25em}
+\setlist[enumerate]{leftmargin=2.4em,itemsep=0.25em}
+
+\titleformat{\chapter}{\Huge\bfseries\color{MainBlue}}{\thechapter}{0.8em}{}
+\titleformat{\section}{\Large\bfseries\color{MainBlue}}{\thesection}{0.8em}{}
+\titleformat{\subsection}{\large\bfseries\color{MainBlue}}{\thesubsection}{0.8em}{}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small ROI校正・SaikuPatchCoreコード解読ガイド}
+\fancyhead[R]{\small \leftmark}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.3pt}
+
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+\newtcolorbox{pointbox}[1]{
+  colback=SubBlue,colframe=MainBlue,boxrule=0.6pt,arc=2mm,
+  title=\textbf{#1},fonttitle=\bfseries,left=2mm,right=2mm,top=1.5mm,bottom=1.5mm
+}
+\newtcolorbox{imagebox}[1]{
+  colback=LightGreen,colframe=CodeGreen,boxrule=0.6pt,arc=2mm,
+  title=\textbf{イメージ：#1},fonttitle=\bfseries,left=2mm,right=2mm,top=1.5mm,bottom=1.5mm
+}
+\newtcolorbox{warnbox}[1]{
+  colback=LightOrange,colframe=WarnRed,boxrule=0.6pt,arc=2mm,
+  title=\textbf{注意：#1},fonttitle=\bfseries,left=2mm,right=2mm,top=1.5mm,bottom=1.5mm
+}
+
+\lstset{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{CodeBlue}\bfseries,
+  commentstyle=\color{CodeGreen},
+  stringstyle=\color{WarnRed},
+  backgroundcolor=\color{LightGray},
+  frame=single,
+  rulecolor=\color{gray!45},
+  breaklines=true,
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true,
+  tabsize=4
+}
+
+\tikzset{
+  flow/.style={draw=MainBlue,fill=SubBlue,rounded corners,minimum width=34mm,minimum height=10mm,align=center,font=\small},
+  data/.style={draw=CodeGreen,fill=LightGreen,rounded corners,minimum width=30mm,minimum height=9mm,align=center,font=\small},
+  future/.style={draw=gray,fill=gray!10,dashed,rounded corners,minimum width=32mm,minimum height=9mm,align=center,font=\small},
+  arrow/.style={-{Stealth[length=2.4mm]},thick,draw=MainBlue}
+}
+
+\begin{document}
+
+\begin{titlepage}
+\centering
+\vspace*{22mm}
+{\Huge\bfseries\color{MainBlue} ROI校正・Canonical正規化・\\[2mm]SaikuPatchCore実験コード解読ガイド\par}
+\vspace{8mm}
+{\Large Python・画像処理・PatchCore実装を読み解くための基礎知識レポート\par}
+\vspace{14mm}
+\begin{tcolorbox}[width=0.88\linewidth,colback=LightGray,colframe=MainBlue,arc=2mm]
+本資料の目的は，今回作成したROI校正・canonical dataset生成・正常モード解析・SaikuPatchCore基準実験コードを，単に実行するだけでなく，\textbf{自分で読んで修正できる状態}にすることである．Pythonの文法，NumPy/OpenCV/PyTorchのデータ構造，円フィッティング，GrabCut，CNN特徴，memory bank，k-means，FAISS最近傍探索までを，実コードの処理順に沿って説明する．
+\end{tcolorbox}
+\vfill
+\begin{tabular}{rl}
+\textbf{対象：} & KHI / MVTec AD形式の局所異常検知実験\\
+\textbf{基盤：} & SaikuPatchCore / WideResNet50-2 / FAISS\\
+\textbf{前処理：} & Dataset-specific ROI Prior Calibration\\
+\textbf{作成日：} & 2026年8月7日
+\end{tabular}
+\vfill
+{\small 本資料中のコード構造・関数名は，今回作成した\texttt{khi\_roi\_patchcore\_pipeline\_20260807}を基に整理したものである．}
+\end{titlepage}
+
+\tableofcontents
+\clearpage
+
+\chapter{まず全体像をつかむ}
+
+\section{今回のコードは何をするのか}
+今回のコードは，一つの巨大なプログラムではなく，処理を段階ごとに分けた構成である．最初に撮影環境ごとの評価領域を少数画像から校正し，次にそのROIを使って幾何形状を保った正方形画像を作る．その後，正常画像の外観分布を解析し，最後にROI内のCNNパッチ特徴だけを用いてSaikuPatchCore型異常検知を実行する．
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=7mm]
+\node[flow] (raw) {撮影環境固有の画像\\MVTec AD形式};
+\node[flow,below=of raw] (cal) {ROI Prior Calibration\\circle / polygon / smart};
+\node[flow,below=of cal] (canon) {Canonical ROI Normalization\\正方形crop + 等方resize};
+\node[flow,below=of canon] (cnn) {WideResNet50-2\\patch feature};
+\node[flow,below=of cnn] (bank) {Memory bank\\Random / MiniBatchKMeans};
+\node[flow,below=of bank] (faiss) {FAISS kNN\\最近傍距離};
+\node[flow,below=of faiss] (map) {異常スコア・異常マップ};
+\node[future,right=17mm of bank] (strat) {将来：正常モード保存型\\Stratified Coreset};
+\node[future,right=17mm of faiss] (gnn) {将来：Sparse Graph\\Context};
+\draw[arrow] (raw)--(cal);
+\draw[arrow] (cal)--(canon);
+\draw[arrow] (canon)--(cnn);
+\draw[arrow] (cnn)--(bank);
+\draw[arrow] (bank)--(faiss);
+\draw[arrow] (faiss)--(map);
+\draw[-{Stealth},dashed,gray] (strat)--(bank);
+\draw[-{Stealth},dashed,gray] (faiss)--(gnn);
+\end{tikzpicture}
+\caption{今回の再実験コードの全体像．灰色は今後追加する研究要素である．}
+\end{figure}
+
+\begin{pointbox}{最初に覚えるべきこと}
+コードを読むときは，関数名を一つずつ暗記するよりも，\textbf{「この変数は今，画像なのか，maskなのか，特徴ベクトルなのか」}を追うことが重要である．今回のコードでは，主に\texttt{Path}，\texttt{numpy.ndarray}，\texttt{torch.Tensor}，\texttt{dict}の4種類を追えば流れが見えやすい．
+\end{pointbox}
+
+\section{5つの主要Pythonファイル}
+\begin{table}[H]
+\centering
+\caption{今回の主要ファイルと役割}
+\begin{tabularx}{\linewidth}{L{44mm} Y}
+\toprule
+ファイル & 役割 \\
+\midrule
+\texttt{khi\_roi\_common.py} & 円fit，GrabCut，mask生成，正方形crop，padding，resizeなどの共通関数 \\
+\texttt{01\_roi\_calibration\_app.py} & 少数の代表正常画像からROI priorを手動・半自動で作成 \\
+\texttt{02\_build\_canonical\_mvtec\_dataset.py} & ROI profileを全画像へ適用し，幾何形状を保ったMVTec AD形式データセットを生成 \\
+\texttt{03\_analyze\_normal\_modes.py} & train/goodだけから明度・コントラスト・gradient等を算出し，正常モード候補を探索 \\
+\texttt{04\_run\_saiku\_patchcore\_baselines.py} & CNN特徴抽出，memory bank作成，k-means圧縮，FAISS検索，異常スコア計算 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\chapter{Pythonコードを読むための最低限の文法}
+
+\section{変数・型・関数}
+Pythonでは，変数に型名を直接書かなくても値を代入できる．ただし今回のコードでは，読みやすさのために型ヒントを多用している．
+
+\begin{lstlisting}
+from pathlib import Path
+from typing import List, Optional, Tuple
+
+image_path: Path
+points: List[Tuple[int, int]] = []
+gt_path: Optional[Path] = None
+\end{lstlisting}
+
+\texttt{List[Tuple[int,int]]}は「整数2個の組を複数持つリスト」，\texttt{Optional[Path]}は「PathまたはNone」という意味である．型ヒントは実行時の変数を固定するものではなく，人間と静的解析ツールに意図を伝える役割が大きい．
+
+\section{list・tuple・dict}
+\begin{table}[H]
+\centering
+\caption{よく使うコンテナ型}
+\begin{tabularx}{\linewidth}{L{28mm} L{52mm} Y}
+\toprule
+型 & 例 & 今回の用途 \\
+\midrule
+\texttt{list} & \texttt{[p1,p2,p3]} & クリック点，画像パス，特徴chunk一覧 \\
+\texttt{tuple} & \texttt{(x,y)} & 座標，shape，変更しないまとまり \\
+\texttt{dict} & \texttt{\{"cx":10,"r":20\}} & ROI profile，設定，metrics \\
+\texttt{set} & \texttt{\{".png",".jpg"\}} & 対応拡張子の集合 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{imagebox}{dictは「名前付きの小さな設定表」}
+ROI profileの\texttt{parameters["cx\_norm"]}のような書き方は，表の「cx\_norm列」を名前で取り出すイメージである．JSONへ保存すると，Pythonを終了しても同じ設定を後で復元できる．
+\end{imagebox}
+
+\section{dataclass}
+今回のコードでは，円や実験設定のように「複数の値をひとまとまりとして扱う」ために\texttt{@dataclass}を使っている．
+
+\begin{lstlisting}
+@dataclass(frozen=True)
+class Circle:
+    cx: float
+    cy: float
+    r: float
+\end{lstlisting}
+
+通常の辞書でも表現できるが，\texttt{Circle(cx=..., cy=..., r=...)}と書けるため，何の値かが明確になる．\texttt{frozen=True}は，作成後に値を勝手に書き換えにくくする指定である．
+
+\section{classとself}
+\texttt{CalibrationApp}は，ウィンドウ状態，現在の画像番号，クリック点，確定済み結果を一つのオブジェクトにまとめるクラスである．\texttt{self.points}は「このアプリ自身が保持しているクリック点」である．
+
+\begin{lstlisting}
+class CalibrationApp:
+    def __init__(self, image_paths, mode, output_dir, ...):
+        self.image_paths = list(image_paths)
+        self.mode = mode
+        self.index = 0
+        self.points = []
+\end{lstlisting}
+
+関数だけで書くと多数の状態変数を引数で渡し続ける必要があるため，GUIのように状態を保持する処理ではclassが有効である．
+
+\section{if・for・内包表記}
+\begin{lstlisting}
+images = [
+    p for p in folder.iterdir()
+    if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+]
+\end{lstlisting}
+これは「フォルダ内を順に調べ，条件を満たした\texttt{p}だけをリストへ入れる」というlist comprehensionである．同じ処理を通常の\texttt{for}文で書くより短い．
+
+\section{例外処理}
+\texttt{raise ValueError(...)}は，入力がおかしい状態で処理を続けず，その場で明示的に止めるために使う．
+
+\begin{lstlisting}
+if len(points) < 3:
+    raise ValueError("circle fit needs at least 3 points")
+\end{lstlisting}
+
+異常検知コードでは，GTが無い，ROI maskが空，CUDAが使えない等を曖昧に続行すると結果を誤解するため，早い段階で停止する方が安全である．
+
+\section{argparseとPowerShell引数}
+\texttt{argparse}は，PowerShellから実験条件を渡す仕組みである．
+
+\begin{lstlisting}
+p.add_argument("--output-size", type=int, default=512)
+p.add_argument("--refine-circle", action="store_true")
+\end{lstlisting}
+
+\texttt{--output-size 512}なら整数512が入り，\texttt{--refine-circle}は書いたときだけTrueになる．コード本文を書き換えず条件を変えられるため，再現可能な実験に適している．
+
+\chapter{画像はNumPy配列である}
+
+\section{OpenCV画像のshape}
+OpenCVで読み込んだカラー画像は，多くの場合\texttt{numpy.ndarray}であり，shapeは
+\[
+(H, W, C)
+\]
+である．ここで\(H\)は高さ，\(W\)は幅，\(C=3\)は色チャネルである．OpenCVの色順は基本的にBGRである．
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\draw[thick,MainBlue,fill=SubBlue] (0,0) rectangle (6,3.4);
+\node at (3,1.7) {\Large 画像配列};
+\draw[->,thick] (-0.2,0)--(-0.2,3.4) node[midway,left]{高さ H};
+\draw[->,thick] (0,-0.25)--(6,-0.25) node[midway,below]{幅 W};
+\node[align=left] at (8.2,2.4) {1画素\\$[B,G,R]$};
+\draw[->,thick] (7.1,2.0)--(6.0,1.8);
+\end{tikzpicture}
+\caption{OpenCVカラー画像の基本イメージ．}
+\end{figure}
+
+\section{maskは0/255またはboolの2次元配列}
+ROI maskは，評価対象なら255，対象外なら0という2次元画像として保存する．計算時には\texttt{mask > 127}としてbool配列へ変換する．
+
+\begin{lstlisting}
+valid = roi_mask > 127
+values = gray[valid]
+\end{lstlisting}
+
+この\texttt{gray[valid]}は，2次元画像からROI内部の画素だけを1次元に取り出すBoolean indexingである．正常モード解析の平均明度などはこの方式で計算している．
+
+\section{dtypeの意味}
+画像では\texttt{uint8}（0--255）が多く，CNN特徴や距離計算では\texttt{float32}が多い．
+
+\begin{table}[H]
+\centering
+\caption{今回よく現れるdtype}
+\begin{tabularx}{\linewidth}{L{30mm} L{35mm} Y}
+\toprule
+dtype & 値の例 & 用途 \\
+\midrule
+\texttt{uint8} & 0--255 & JPEG/PNG画像，mask \\
+\texttt{bool} & True/False & ROI内外の選択 \\
+\texttt{float32} & 実数 & CNN特徴，gradient，FAISS入力 \\
+\texttt{float64} & 高精度実数 & 円fitや統計計算の一部 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{reshape・transpose・permute}
+機械学習コードでは同じ数値を「どの軸を先に置くか」で形を変える．NumPyは\texttt{reshape}や\texttt{transpose}，PyTorchは\texttt{view}，\texttt{reshape}，\texttt{permute}を使う．
+
+例えばCNN特徴はPyTorchでは
+\[
+(B,C,H,W)
+\]
+であるが，各patchを1行のベクトルとして扱いたい場合は
+\[
+(B,H,W,C)
+\]
+へ\texttt{permute}してからROI位置を選択する．
+
+\begin{lstlisting}
+features = embedding.permute(0, 2, 3, 1).contiguous()
+rows = features[valid[:, 0]]
+\end{lstlisting}
+
+\chapter{ROI Prior Calibrationの中身}
+
+\section{なぜ毎画像ゼロからROI検出しないのか}
+同一撮影条件では製品の相対位置がほぼ一定であるという前提を利用し，少数画像でROIを校正する．これにより，画像全体から毎回物体検出を行うよりも処理が軽く，検査対象を人間が説明しやすい．KHIではcircleを使えるが，非円形データではpolygonまたはsmart maskを使う．
+
+\section{Circleモード：点から円を推定する}
+ユーザーが円周上に複数点をクリックする．理想的な円周点\((x_i,y_i)\)は
+\[
+(x_i-c_x)^2+(y_i-c_y)^2=r^2
+\]
+を満たす．実際のクリックには誤差があるため，すべての点へ完全一致させるのではなく，RANSACで外れ点を除き，残った点に最小二乗fitを行う．
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[scale=0.95]
+\draw[thick,MainBlue] (0,0) circle (2);
+\fill (0,0) circle (2pt) node[below right]{$(c_x,c_y)$};
+\foreach \a in {15,55,95,145,195,235,285,330}{
+  \fill[CodeGreen] ({2*cos(\a)},{2*sin(\a)}) circle (2.5pt);
+}
+\fill[WarnRed] (2.7,1.3) circle (2.5pt) node[right]{外れクリック};
+\draw[dashed,gray] (0,0)--(1.42,1.42) node[midway,above]{$r$};
+\node[align=left] at (6.2,0.7) {緑：inlier候補\\赤：RANSACで除外したい点\\最終円：inlierへ再fit};
+\end{tikzpicture}
+\caption{Circleモードの考え方．}
+\end{figure}
+
+\subsection{最小二乗法をコードでどう書いているか}
+円の式を展開すると，未知数\(c_x,c_y,c\)について線形に整理できる．コードでは
+\[
+A=\begin{bmatrix}
+2x_1 & 2y_1 & 1\\
+\vdots & \vdots & \vdots\\
+2x_n & 2y_n & 1
+\end{bmatrix},\qquad
+b=\begin{bmatrix}
+x_1^2+y_1^2\\
+\vdots\\
+x_n^2+y_n^2
+\end{bmatrix}
+\]
+を作り，\texttt{np.linalg.lstsq(A,b)}で解いている．
+
+\begin{pointbox}{lstsqのイメージ}
+点が多いと方程式の本数が未知数より多くなるため，すべてへ完全一致する解は通常存在しない．\texttt{lstsq}は「全体として誤差が小さくなる解」を返す．
+\end{pointbox}
+
+\section{RANSACとは何か}
+RANSACでは，点群からランダムに3点を選び，その3点から仮の円を作る．各点がその円から何pixelずれているかを調べ，閾値以内をinlierとする．これを何度も繰り返し，最も多くのinlierを説明できた円を採用する．今回の関数\texttt{fit\_circle\_ransac}は，最後にinlierだけで最小二乗fitをやり直す．
+
+\section{Polygonモード}
+Polygonではユーザーが頂点を順番にクリックし，\texttt{cv2.fillPoly}で内部を255に塗る．最終的にPatchCoreへ必要なのは「円か多角形か」という名前ではなく，\textbf{ROI mask}であるため，以後の処理を共通化できる．
+
+\section{SmartモードとGrabCut}
+Smartモードでは，ユーザーが対象領域の外周を大まかになぞる．その粗いpolygonを使って，外側を背景，内側を「前景らしい」，さらに内側を少しerodeした領域を「確実な前景」としてGrabCutへ渡す．
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=8mm]
+\node[data] (lasso) {人間が粗く\\輪郭をなぞる};
+\node[data,right=of lasso] (rough) {rough polygon\\mask};
+\node[data,right=of rough] (seed) {背景 / probable前景\\sure前景};
+\node[data,right=of seed] (gc) {GrabCut};
+\node[data,right=of gc] (mask) {ROI mask};
+\draw[arrow] (lasso)--(rough);
+\draw[arrow] (rough)--(seed);
+\draw[arrow] (seed)--(gc);
+\draw[arrow] (gc)--(mask);
+\end{tikzpicture}
+\caption{Smart BrushからROI maskを得る流れ．}
+\end{figure}
+
+\section{複数校正画像をどう統合するか}
+Circleでは，各画像で得た\(c_x,c_y,r\)を画像サイズで正規化し，中央値を代表値とする．ばらつきはMAD（median absolute deviation）で保存する．
+
+\[
+\mathrm{MAD}(x)=\mathrm{median}(|x_i-\mathrm{median}(x)|)
+\]
+
+Polygon/Smartでは，各画像のmaskを共通解像度へ合わせて平均し，ROI存在確率mapを作る．例えば閾値0.6なら，校正画像の60\%以上でROIだった画素を代表ROIとする．
+
+\chapter{Canonical ROI Normalization}
+
+\section{なぜ直接256×256へResizeしないのか}
+元画像が1600×1200の場合，直接256×256へ変換するとx方向とy方向の縮尺が異なり，円が楕円へ変形する．今回のコードでは，まずROIを包含する\textbf{正方形crop}を作り，その後に正方形から正方形へresizeする．
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[scale=0.9]
+\draw[thick] (0,0) rectangle (6,4.5);
+\draw[thick,MainBlue] (3,2.25) circle (1.45);
+\node at (3,-0.45) {元画像 1600×1200相当};
+\draw[very thick,CodeGreen] (1.25,0.5) rectangle (4.75,4.0);
+\draw[arrow] (6.5,2.25)--(8.0,2.25);
+\draw[thick,CodeGreen,fill=LightGreen] (8.5,0.5) rectangle (12,4.0);
+\draw[thick,MainBlue] (10.25,2.25) circle (1.45);
+\node at (10.25,-0.45) {正方形crop};
+\draw[arrow] (12.5,2.25)--(14.0,2.25);
+\draw[thick,fill=SubBlue] (14.5,1.0) rectangle (17.0,3.5);
+\draw[thick,MainBlue] (15.75,2.25) circle (1.03);
+\node at (15.75,0.45) {512×512};
+\end{tikzpicture}
+\caption{幾何形状を保つcanonical化．正方形→正方形なのでx/yの縮尺が等しい．}
+\end{figure}
+
+\section{make\_square\_transform}
+ROI maskの非0領域からbounding boxを求め，その幅と高さの大きい方を基準に正方形を作る．marginを\(m\)とすると概念的に
+\[
+L=\max(w_{ROI},h_{ROI})(1+2m)
+\]
+で一辺\(L\)を決める．画像外へはみ出す場合はpadding量を記録する．
+
+\section{画像とmaskで補間法を変える}
+画像には\texttt{cv2.INTER\_AREA}，ROI maskとGTには\texttt{cv2.INTER\_NEAREST}を使用する．maskで線形補間を使うと0と255の間の中間値が生じ，クラス境界が曖昧になるためである．
+
+\begin{table}[H]
+\centering
+\caption{補間方法を分ける理由}
+\begin{tabularx}{\linewidth}{L{35mm} L{42mm} Y}
+\toprule
+対象 & 補間 & 理由 \\
+\midrule
+通常画像 & INTER\_AREA & 縮小時に画質を保ちやすい \\
+ROI mask & INTER\_NEAREST & 0/255のラベルを壊さない \\
+GT mask & INTER\_NEAREST & 異常ラベル境界を連続値にしない \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{局所円補正でSobelを使う理由}
+オプションの\texttt{--refine-circle}では，保存済み円の周囲だけを探索する．まずGaussian blur後にSobelフィルタでx/y方向gradientを計算し，gradient magnitudeを作る．候補円周720点のgradient平均が大きい円を採用する．
+
+\[
+G=\sqrt{G_x^2+G_y^2}
+\]
+
+完全なHough探索ではなく，\((c_x,c_y,r)\)の近傍だけを検索するため，撮影環境ごとのROI priorを活かした軽量な補正である．
+
+\chapter{MVTec AD形式とファイル探索}
+
+\section{カテゴリという言葉の意味}
+今回のコードにおけるcategoryは，必ずしも意味的な製品クラスを表すだけではなく，\texttt{train/good}と\texttt{test}を持つMVTec AD形式フォルダを選択するための単位である．KHIでは\texttt{chip}をカテゴリとして使える．
+
+\begin{verbatim}
+category/
+  train/good/
+  test/good/
+  test/chip/
+  ground_truth/chip/
+  roi_masks/train/good/
+  roi_masks/test/good/
+  roi_masks/test/chip/
+\end{verbatim}
+
+\section{Pathlib}
+\texttt{Path}はWindowsパスを文字列連結するより安全に扱いやすい．
+
+\begin{lstlisting}
+roi_path = path / "roi_masks" / "train" / "good" / filename
+if roi_path.exists():
+    ...
+\end{lstlisting}
+
+\texttt{/}演算子でフォルダを接続でき，\texttt{.stem}で拡張子を除いた名前，\texttt{.suffix}で拡張子を取得する．
+
+\section{日本語WindowsパスとOpenCV}
+\texttt{imread\_unicode}では，\texttt{np.fromfile}でファイルをバイト列として読み，\texttt{cv2.imdecode}で画像化する．保存時は逆に\texttt{cv2.imencode}して\texttt{tofile}する．これは日本語を含むWindowsパスでOpenCV標準入出力が問題になる場合を避けるための実装である．
+
+\chapter{正常モード解析を読む}
+
+\section{descriptor関数}
+\texttt{03\_analyze\_normal\_modes.py}では，train/goodだけを使う．ROI内画素について平均，標準偏差，percentile，IQR，gradient等を計算する．異常画像やGTを使わないことが重要である．
+
+\begin{table}[H]
+\centering
+\caption{正常モード探索用記述量}
+\begin{tabularx}{\linewidth}{L{45mm} Y}
+\toprule
+特徴 & 直感的な意味 \\
+\midrule
+mean\_intensity & ROI全体の明るさ \\
+std\_intensity & 明るさのばらつき \\
+p05, p50, p95 & 暗部・中央値・明部の代表値 \\
+dynamic\_p95\_p05 & 明暗差の大きさ \\
+iqr & 中央50\%のばらつき \\
+mean\_gradient & エッジ・反射変化の平均的強さ \\
+p95\_gradient & 強いエッジの上位側 \\
+roi\_ratio & 画像内でROIが占める割合 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{StandardScaler}
+k-meansは距離を使うため，値の単位が大きい特徴が支配しやすい．そこで各特徴を概ね平均0，標準偏差1へ変換する．
+
+\[
+z=\frac{x-\mu}{\sigma}
+\]
+
+これが\texttt{StandardScaler.fit\_transform}である．
+
+\section{k-meansは「真の正常モード」を自動で発見する魔法ではない}
+\texttt{KMeans(n\_clusters=4)}は，指定した4群へ距離ベースで分割するだけである．したがって，得られたM00--M03が研究上意味のある正常モードかどうかは，代表画像，時系列，明度分布，mode別FPRなどを確認して判断する必要がある．
+
+\chapter{PyTorchとCNN特徴を読む}
+
+\section{Tensorの基本shape}
+PyTorchの画像Tensorは通常
+\[
+(B,C,H,W)
+\]
+である．\(B\)はbatch数，\(C\)はチャネル数である．例えば2枚のRGB 256×256画像なら概念的には\texttt{(2,3,256,256)}である．
+
+\section{ImageNet正規化}
+WideResNet50-2はImageNet事前学習重みを使うため，入力をImageNetで一般的な平均・標準偏差で正規化する．
+
+\begin{lstlisting}
+transforms.Normalize(
+    mean=[0.485, 0.456, 0.406],
+    std=[0.229, 0.224, 0.225],
+)
+\end{lstlisting}
+
+\begin{warnbox}{KHI画像でCNN重みを学習しているわけではない}
+今回の標準PatchCoreではWideResNet50-2のparameterを\texttt{requires\_grad=False}にし，\texttt{eval()}で使用する．KHIの正常画像はCNNを再学習するためではなく，正常patch特徴をmemory bankへ蓄えるために使う．
+\end{warnbox}
+
+\section{forward hook}
+CNN全体の最終分類結果が欲しいのではなく，中間層\texttt{layer2[-1]}と\texttt{layer3[-1]}の特徴が欲しい．そこで\texttt{register\_forward\_hook}を使う．
+
+\begin{lstlisting}
+self.model.layer2[-1].register_forward_hook(self._hook)
+self.model.layer3[-1].register_forward_hook(self._hook)
+\end{lstlisting}
+
+forward時にその層を通ると\texttt{self._hook}が呼ばれ，出力Tensorを\texttt{self.outputs}へ保存する．
+
+\begin{imagebox}{hookは「途中の測定端子」}
+CNNを一つの長い配管と考えると，hookは途中の2か所に測定器を取り付け，流れてきた特徴を横取りして記録する仕組みである．モデル本体のforward処理を大きく書き換えずに中間特徴を得られる．
+\end{imagebox}
+
+\section{AvgPool2d}
+\texttt{AvgPool2d(kernel=3,stride=1,padding=1)}は，3×3近傍を平均して局所特徴を少し平滑化する．stride=1なので空間サイズを大きく落とさず，padding=1で端部サイズを保ちやすい．
+
+\section{layer2とlayer3の特徴を結合する}
+2つの層は空間解像度が異なるため，\texttt{F.unfold}で細かい側の局所領域を展開し，粗い側の特徴とチャネル方向に結合し，\texttt{F.fold}で戻す．想定外shapeの場合にはnearest interpolationを使うfallbackがある．
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=9mm]
+\node[data] (l2) {layer2特徴\\細かい空間};
+\node[data,below=of l2] (l3) {layer3特徴\\粗い空間};
+\node[flow,right=17mm of l2] (unfold) {unfold / align};
+\node[flow,right=17mm of l3] (cat) {channel concat};
+\node[flow,right=17mm of cat] (fold) {fold\\combined embedding};
+\draw[arrow] (l2)--(unfold);
+\draw[arrow] (l3)--(cat);
+\draw[arrow] (unfold)--(cat);
+\draw[arrow] (cat)--(fold);
+\end{tikzpicture}
+\caption{複数層特徴の結合イメージ．}
+\end{figure}
+
+\section{ROI maskをfeature mapへ縮小する}
+入力画像のROI maskをCNN特徴mapの\(H\times W\)へnearestで縮小し，Trueの位置だけ特徴ベクトルを取り出す．
+
+\begin{lstlisting}
+valid = F.interpolate(roi_mask.float(), size=(h, w), mode="nearest") > 0.5
+features = embedding.permute(0, 2, 3, 1).contiguous()
+rows = features[valid[:, 0]]
+\end{lstlisting}
+
+これにより，背景やpadding部分のpatchをmemory bankへ入れない．
+
+\section{no\_gradとGPU}
+\texttt{@torch.no\_grad()}は勾配計算用情報を保存しない．推論・特徴抽出だけならbackpropagationが不要なので，GPUメモリを減らせる．\texttt{tensor.to(device)}でCPU/GPUを切り替える．
+
+\chapter{memory bankとメモリ不足対策}
+
+\section{memory bankとは}
+PatchCoreでは正常画像の各patchをCNN特徴ベクトルへ変換し，代表的な正常特徴を保存する．これがmemory bankである．テストpatchがmemory bankのどの正常特徴にも近くなければ，異常度が高いと考える．
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=10mm]
+\node[data] (train) {正常画像群};
+\node[flow,right=of train] (cnn) {CNN};
+\node[data,right=of cnn] (patch) {多数のpatch\\feature};
+\node[flow,right=of patch] (sample) {1\% coreset\\k-means等};
+\node[data,right=of sample] (bank) {memory bank};
+\draw[arrow] (train)--(cnn);
+\draw[arrow] (cnn)--(patch);
+\draw[arrow] (patch)--(sample);
+\draw[arrow] (sample)--(bank);
+\end{tikzpicture}
+\caption{正常memory bank作成の概念．}
+\end{figure}
+
+\section{なぜchunk保存するのか}
+全画像の全patch特徴をPython listに持ち続けると，画像枚数・解像度が増えるほどRAM使用量が増える．今回のコードではbatchごとに\texttt{chunk\_000001.npy}のようにディスクへ保存し，必要なときだけ読み込む．
+
+\begin{lstlisting}
+np.save(chunk_path, features)
+...
+arr = np.load(path, mmap_mode="r")
+\end{lstlisting}
+
+\texttt{mmap\_mode="r"}は，巨大配列を一度にRAMへ全読み込みせず，ファイルをメモリ上の配列のように参照するmemory mappingである．
+
+\section{MiniBatchKMeans}
+通常k-meansは全データを何度も扱うため大規模memory bankでは重い．\texttt{MiniBatchKMeans}は小さなbatchを使ってcluster中心を逐次更新する．今回の\texttt{kmeans\_stream}では\texttt{partial\_fit}を繰り返し，1\%程度のprototypeへ圧縮する．
+
+\begin{pointbox}{1\%の意味}
+元の有効patchが100万個なら，理想的には約1万個の代表ベクトルへ減らす考え方である．ただし設定には\texttt{max\_prototypes}もあり，上限を超えないよう制限する．
+\end{pointbox}
+
+\section{random samplingとの違い}
+Random 1\%は代表点をランダムに選ぶ．k-means 1\%は特徴空間をclusterに分け，各cluster中心をprototypeとする．今後の研究では，ここを「正常モードごとに最低限のprototypeを保証する層化coreset」へ発展させる．
+
+\chapter{FAISS最近傍探索}
+
+\section{kNNの意味}
+テストpatch特徴\(q\)とmemory bank中の正常特徴\(m_j\)の距離を比較し，最も近い正常特徴との距離を異常度の基礎とする．
+
+\[
+d(q)=\min_j \|q-m_j\|_2^2
+\]
+
+コードは互換性のため\texttt{n\_neighbors=3}で検索するが，異常スコアには\texttt{distances[:,0]}，すなわち第1近傍距離を用いる．
+
+\section{Flat・IVF・HNSW}
+\begin{table}[H]
+\centering
+\caption{FAISS検索方式の直感的比較}
+\begin{tabularx}{\linewidth}{L{25mm} L{38mm} Y}
+\toprule
+方式 & イメージ & 役割 \\
+\midrule
+FlatL2 & 全員と総当たり & 遅いが近似誤差のない診断基準 \\
+IVF & 先に大きな群へ分け，近そうな群だけ探索 & 速度と精度の折衷 \\
+HNSW & 近傍グラフをたどる & 高速な近似最近傍候補 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+IVFでは\texttt{nlist}が粗いcluster数，\texttt{nprobe}が検索時に何clusterを見るかを表す．nprobeを増やすと一般に検索量が増え，近似誤差を減らしやすいが遅くなる．
+
+\chapter{テスト推論と異常マップ}
+
+\section{infer\_resolutionの処理順}
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=6mm]
+\node[flow] (img) {canonical画像};
+\node[flow,below=of img] (tensor) {Tensor化・正規化};
+\node[flow,below=of tensor] (feat) {CNN embedding};
+\node[flow,below=of feat] (roi) {ROI内patchだけ抽出};
+\node[flow,below=of roi] (knn) {FAISS kNN};
+\node[flow,below=of knn] (grid) {patch scoreをgridへ戻す};
+\node[flow,below=of grid] (up) {resize + Gaussian smoothing};
+\node[flow,below=of up] (mask) {ROI外を0};
+\draw[arrow] (img)--(tensor);\draw[arrow] (tensor)--(feat);\draw[arrow] (feat)--(roi);
+\draw[arrow] (roi)--(knn);\draw[arrow] (knn)--(grid);\draw[arrow] (grid)--(up);\draw[arrow] (up)--(mask);
+\end{tikzpicture}
+\caption{1解像度あたりの異常マップ生成．}
+\end{figure}
+
+\section{画像スコア}
+各有効patchの最近傍距離の最大値を画像スコアにする．つまり「画像の中で最も正常memory bankから離れた場所」を画像全体の異常度としている．
+
+\section{256と512の融合}
+low/high両方を使う場合，画像スコア・異常mapをmeanまたはmaxで融合する．512は細部を保持しやすい一方で処理量が増えるため，256-only，512-only，dualを分けて比較する．
+
+\chapter{評価指標と出力ファイル}
+
+\section{AUROCとAP}
+Image AUROCは正常画像と異常画像のスコア順位分離を評価する．APはprecision-recall関係をまとめる指標であり，異常が少ないデータではAUROCと異なる見え方をする．今回のbaselineコードではImage AUROC/APを全画像で計算する．
+
+Pixel AUROC/APはメモリ節約のためROI内画素をサンプリングして計算しているため，\textbf{最終論文用の厳密pixel評価とは区別する必要がある}．AUPRO等は別評価で追加する．
+
+\section{metrics.jsonを読む}
+\begin{table}[H]
+\centering
+\caption{主要metricsの意味}
+\begin{tabularx}{\linewidth}{L{48mm} Y}
+\toprule
+キー & 意味 \\
+\midrule
+image\_auroc / image\_ap & 画像単位の識別性能 \\
+pixel\_auroc\_sampled / pixel\_ap\_sampled & ROI内サンプル画素による暫定pixel性能 \\
+vectors\_before / vectors\_after & memory bank圧縮前後のベクトル数 \\
+compression\_ratio\_actual & 実際に残った割合 \\
+memory\_bank\_mb & prototype配列の容量 \\
+feature\_extraction\_sec & train特徴抽出時間 \\
+sampler\_sec & random / k-means処理時間 \\
+index\_build\_sec & FAISS index構築時間 \\
+inference\_mean\_sec & 1画像あたり平均推論時間 \\
+inference\_p95\_sec & 遅い側5\%を意識した推論時間 \\
+test\_total\_sec & test全体の処理時間 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\chapter{ファイル別の読み方}
+
+\section{khi\_roi\_common.py}
+最初に読むべきファイルである．画像I/O，円fit，mask生成，canonical cropが独立した小さな関数として並ぶ．以下の順で読むと理解しやすい．
+
+\begin{enumerate}
+\item \texttt{Circle}, \texttt{SquareTransform}：データ構造を把握する．
+\item \texttt{fit\_circle\_ransac}：点→円の変換を見る．
+\item \texttt{polygon\_mask}, \texttt{grabcut\_from\_lasso}：任意形状→maskを見る．
+\item \texttt{make\_square\_transform}：mask→正方形領域を見る．
+\item \texttt{canonicalize\_image\_and\_mask}：画像・ROI・GTへ同じ変換を適用する部分を見る．
+\end{enumerate}
+
+\section{01\_roi\_calibration\_app.py}
+GUIのイベント駆動コードであるため，\texttt{run()}から逆に読むとよい．\texttt{cv2.waitKey}がキー入力を受け，マウス入力は\texttt{mouse\_callback}へ入り，Enter時に\texttt{estimate\_current}と\texttt{confirm\_current}が呼ばれる．最後に\texttt{build\_profile}で複数画像を統合する．
+
+\section{02\_build\_canonical\_mvtec\_dataset.py}
+\texttt{main}→\texttt{process\_category}→\texttt{process\_one}の順に追う．1枚単位の処理は\texttt{process\_one}に集約されているため，デバッグ時もここを中心に見るとよい．
+
+\section{03\_analyze\_normal\_modes.py}
+\texttt{descriptor}が「1画像→1行の数値特徴」を作り，DataFrameへ蓄積する．その後StandardScaler，KMeans，groupby集計という典型的な表データ解析の流れである．
+
+\section{04\_run\_saiku\_patchcore\_baselines.py}
+最も長いので，以下のブロックに分ける．
+
+\begin{enumerate}
+\item ExperimentConfig / preset
+\item MVTec ADデータ読込み
+\item FeatureExtractor
+\item train特徴chunk保存
+\item memory bank sampler
+\item FAISS index
+\item test inference
+\item metrics保存
+\end{enumerate}
+
+いきなり\texttt{run\_category}全体を追わず，各ブロックの入力と出力shapeをメモしながら読むことが重要である．
+
+\chapter{主要関数リファレンス}
+
+\small
+\begin{longtable}{L{48mm} L{34mm} L{66mm}}
+\caption{主要関数と役割}\label{tab:functions}\\
+\toprule
+関数 & 主な入力→出力 & 役割 \\
+\midrule
+\endfirsthead
+\toprule
+関数 & 主な入力→出力 & 役割 \\
+\midrule
+\endhead
+\texttt{list\_images} & Path→Path list & 対応拡張子の画像一覧を作る \\
+\texttt{imread\_unicode} & Path→ndarray & 日本語パスを考慮した画像読込み \\
+\texttt{save\_json/load\_json} & dict↔JSON & ROI profileや設定を永続化 \\
+\texttt{fit\_circle\_least\_squares} & 点群→Circle & 円周点への最小二乗fit \\
+\texttt{fit\_circle\_ransac} & 点群→Circle+inlier & 外れクリックへ頑健な円推定 \\
+\texttt{polygon\_mask} & 頂点→mask & 多角形ROIを0/255画像化 \\
+\texttt{grabcut\_from\_lasso} & 画像+粗輪郭→mask & 半自動foreground抽出 \\
+\texttt{mask\_bbox} & mask→x,y,w,h & ROI外接矩形を求める \\
+\texttt{make\_square\_transform} & mask→SquareTransform & 等方resize前の正方形cropを設計 \\
+\texttt{apply\_square\_transform} & 画像+transform→画像 & crop/padding/resizeを実行 \\
+\texttt{canonicalize\_image\_and\_mask} & image+ROI+GT→3出力 & 同じ幾何変換を画像・maskへ適用 \\
+\texttt{make\_gradient\_magnitude} & gray→gradient & Sobelによる円境界候補強度 \\
+\texttt{refine\_circle\_local} & image+prior→Circle & prior近傍だけで円を微調整 \\
+\texttt{descriptor} & image+ROI→dict & 正常モード用の明度・gradient統計 \\
+\texttt{FeatureExtractor.extract} & Tensor→embedding & WRN中間層特徴を抽出・結合 \\
+\texttt{flatten\_valid\_features} & embedding+ROI→2D features & ROI内patchだけ取り出す \\
+\texttt{extract\_train\_chunks} & train images→npy群 & 特徴をbatchごとにディスク保存 \\
+\texttt{kmeans\_stream} & chunk群→prototypes & MiniBatchKMeansでmemory bank圧縮 \\
+\texttt{build\_index} & bank→FAISS index & Flat/IVF/HNSW indexを構築 \\
+\texttt{infer\_resolution} & image+ROI+index→score/map & 1解像度のPatchCore推論 \\
+\texttt{fuse\_scores} & low/high→fused & 256/512のmean/max融合 \\
+\texttt{run\_category} & category→metrics & 1カテゴリのtrainからtestまで統括 \\
+\bottomrule
+\end{longtable}
+\normalsize
+
+\chapter{コードを自力で解読するときのチェック方法}
+
+\section{1関数につき5項目だけ書き出す}
+未知の関数を読むときは，次の5点をノートに書くとよい．
+
+\begin{enumerate}
+\item 入力変数の型とshapeは何か．
+\item 出力の型とshapeは何か．
+\item 何を変更し，何を保存するか．
+\item CPU/GPU/RAM/ディスクのどこを多く使うか．
+\item 失敗したとき，どの\texttt{raise}やエラーが出るか．
+\end{enumerate}
+
+\section{shapeをprintする}
+分からないときは，まずshapeを表示するのが有効である．
+
+\begin{lstlisting}
+print(type(image), image.shape, image.dtype)
+print(type(embedding), embedding.shape, embedding.dtype)
+print("valid patches =", int(valid.sum()))
+\end{lstlisting}
+
+ただし全batchで大量にprintすると処理が遅くなるため，最初の1batchだけにするなど制限する．
+
+\section{PowerShellで構文だけ確認する}
+コードを変更した後，実験を数時間走らせる前に構文検査する．
+
+\begin{verbatim}
+python -m py_compile .\khi_roi_common.py
+python -m py_compile .\01_roi_calibration_app.py
+python -m py_compile .\02_build_canonical_mvtec_dataset.py
+python -m py_compile .\03_analyze_normal_modes.py
+python -m py_compile .\04_run_saiku_patchcore_baselines.py
+\end{verbatim}
+
+推定実行時間は数秒である．何も表示されずPowerShellへ戻れば，少なくともPython構文としては通っている．
+
+\section{小規模subsetで確認してから全量へ進む}
+ROI maskが正しいか，Tensor shapeが合うか，FAISS indexが作れるかは少量データでも確認できる．全量KHIで初めてエラーを発見すると時間を失うため，数十枚程度の小規模確認→全量の順が安全である．
+
+\chapter{よく遭遇するエラーの読み方}
+
+\begin{table}[H]
+\centering
+\caption{典型的エラーと確認箇所}
+\begin{tabularx}{\linewidth}{L{43mm} L{43mm} Y}
+\toprule
+エラー例 & 意味 & 最初に見る場所 \\
+\midrule
+\texttt{FileNotFoundError} & パス/GT/ROI maskが無い & dataset-root，stem，拡張子 \\
+\texttt{ValueError: ROI mask is empty} & ROI内画素が0 & calibration preview，profile mask \\
+\texttt{CUDA out of memory} & GPUメモリ不足 & batch size，512処理，残存Tensor \\
+\texttt{MemoryError} / allocation error & CPU RAM不足 & uncompressed bank，巨大concatenate \\
+FAISS train error & vector数とnlist等が不整合 & bank shape，nlist，vector数 \\
+shape mismatch & 画像/ROI/GTの幾何変換不一致 & resize，feature map，interpolate \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{pointbox}{エラーの最後だけでなく直前の数十行を見る}
+Python tracebackは下から上へ読むと，最後に発生した例外と，その例外までどの関数が呼ばれたかが分かる．研究実験では，エラー直前に出している\texttt{vectors=}や\texttt{batch=}も原因特定に重要である．
+\end{pointbox}
+
+\chapter{学習順序と到達目標}
+
+\section{優先して理解する順序}
+このコードを解読する目的であれば，Python全体を体系的に学び終えてから始める必要はない．次の順で学ぶと実コードへ直結する．
+
+\begin{enumerate}
+\item \texttt{Path}, list, dict, for, if, 関数, class
+\item NumPyのshape, slicing, bool mask, dtype
+\item OpenCVの画像・BGR・resize・mask・Sobel
+\item PyTorch TensorのBCHW，\texttt{permute}，\texttt{to(device)}
+\item CNN中間特徴，forward hook，pooling
+\item k-meansとmemory bank
+\item FAISS kNNと異常スコア
+\item AUROC/APと異常マップ評価
+\end{enumerate}
+
+\section{最終的に説明できるべきこと}
+本資料を使ってコードを追った後は，少なくとも次を自分の言葉で説明できる状態を目標とする．
+
+\begin{itemize}
+\item なぜ元画像を直接正方形へstretchしないのか．
+\item circle/polygon/smartが最終的に同じROI maskへ統一される理由．
+\item RANSACと最小二乗がそれぞれ何を担当するか．
+\item ROI maskをCNN feature mapサイズへ縮小する意味．
+\item WideResNetをKHI画像で再学習していない理由．
+\item memory bankが何を保存し，k-means 1\%が何を減らすか．
+\item chunk保存がRAM不足へどう効くか．
+\item FAISSの第1近傍距離がなぜ異常スコアになるか．
+\item AUROCが高くても異常マップ確認が必要な理由．
+\end{itemize}
+
+\chapter{用語集}
+
+\begin{longtable}{L{38mm} L{105mm}}
+\toprule
+用語 & このコードでの意味 \\
+\midrule
+ROI & 異常検知の対象とする画像領域 \\
+ROI prior & 撮影環境ごとに少数画像から記憶した評価領域の事前情報 \\
+Canonical image & ROIを基準に正方形cropし，幾何形状を保って規格サイズへ揃えた画像 \\
+Mask & 有効領域を0/255またはFalse/Trueで表す2次元配列 \\
+GT & 異常部の正解mask \\
+Patch & CNN feature map上の局所位置に対応する特徴単位 \\
+Embedding & CNNが画像から生成した特徴ベクトル/特徴map \\
+Memory bank & 正常patch特徴の代表集合 \\
+Coreset & 大量の特徴から情報を保ちながら減らした代表集合 \\
+MiniBatchKMeans & 小分けデータでcluster中心を逐次更新するk-means \\
+FAISS & 大量ベクトルの最近傍探索ライブラリ \\
+IVF & ベクトルを粗く群分けして探索対象を絞るFAISS index \\
+HNSW & グラフを使った近似最近傍探索方式 \\
+AUROC & 正常/異常スコアの順位分離能力を表す指標 \\
+AP & Precision-Recall関係を要約する指標 \\
+MAD & 中央値からの絶対偏差の中央値で，頑健なばらつき指標 \\
+RANSAC & 外れ値を含む点群から頑健にモデルを推定する反復法 \\
+GrabCut & 人間の粗い前景/背景情報と画素情報から領域を分割する手法 \\
+\bottomrule
+\end{longtable}
+
+\chapter{本レポートで参照した実装}
+本資料は，今回作成した以下の実装内容を直接の対象として整理したものである．一般的なPython・NumPy・OpenCV・PyTorchの説明は，これらの実装を読むために必要な範囲へ限定した．
+
+\begin{itemize}
+\item \texttt{khi\_roi\_common.py}
+\item \texttt{01\_roi\_calibration\_app.py}
+\item \texttt{02\_build\_canonical\_mvtec\_dataset.py}
+\item \texttt{03\_analyze\_normal\_modes.py}
+\item \texttt{04\_run\_saiku\_patchcore\_baselines.py}
+\item \texttt{README\_実験手順.md}
+\end{itemize}
+
+\begin{warnbox}{研究結果とプログラム解説を区別する}
+本資料はコード解読用教材であり，RANSAC，GrabCut，k-means，FAISS等を使ったこと自体を新規研究成果として主張するものではない．研究上の主提案候補である正常モード保存型層化coresetとSparse Graph Contextは，baselineと正常モード解析の検証後に別段階で評価する．
+\end{warnbox}
+
+\chapter*{まとめ}
+\addcontentsline{toc}{chapter}{まとめ}
+今回のコードを読むための中心概念は，\textbf{「画像を配列として扱う」→「ROIをmaskへ統一する」→「正方形へ幾何正規化する」→「CNN特徴をpatch単位へ展開する」→「正常特徴の代表集合を作る」→「最近傍距離から異常度を作る」}という連鎖である．各関数はこの連鎖のどこか一つを担当している．したがって，関数ごとの入力型・shape・出力を追えば，1000行を超える実験コードでも処理を分割して理解できる．
+
+\end{document}
