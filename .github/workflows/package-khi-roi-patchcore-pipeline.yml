@@ -1,0 +1,36 @@
+name: Package KHI ROI PatchCore Pipeline
+
+on:
+  push:
+    branches:
+      - khi-roi-patchcore-pipeline-20260807
+    paths:
+      - "artifacts/khi_roi_patchcore_pipeline_20260807/**"
+      - ".github/workflows/package-khi-roi-patchcore-pipeline.yml"
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python syntax check
+        run: |
+          python -m py_compile artifacts/khi_roi_patchcore_pipeline_20260807/khi_roi_common.py
+          python -m py_compile artifacts/khi_roi_patchcore_pipeline_20260807/01_roi_calibration_app.py
+          python -m py_compile artifacts/khi_roi_patchcore_pipeline_20260807/02_build_canonical_mvtec_dataset.py
+          python -m py_compile artifacts/khi_roi_patchcore_pipeline_20260807/03_analyze_normal_modes.py
+          python -m py_compile artifacts/khi_roi_patchcore_pipeline_20260807/04_run_saiku_patchcore_baselines.py
+
+      - name: Create package
+        run: |
+          cd artifacts
+          zip -r khi_roi_patchcore_pipeline_20260807.zip khi_roi_patchcore_pipeline_20260807
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: khi-roi-patchcore-pipeline
+          path: artifacts/khi_roi_patchcore_pipeline_20260807.zip
