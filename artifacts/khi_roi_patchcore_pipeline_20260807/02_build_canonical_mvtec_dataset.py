@@ -27,9 +27,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
-import math
-import shutil
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -113,29 +110,31 @@ def circle_mask(shape_hw: Tuple[int, int], circle: Circle) -> np.ndarray:
     return mask
 
 
-def circle_edge_score(gray: np.ndarray, circle: Circle, n_samples: int = 720) -> float:
-    """
-    候補円周上のgradient強度平均。
-
-    保存ROIの近傍だけを探索するための軽量スコアであり、
-    画像全体からHoughで円を探す用途ではない。
-    """
+def make_gradient_magnitude(gray: np.ndarray) -> np.ndarray:
+    """局所円探索で共通利用するgradient magnitudeを1画像につき1回だけ計算する。"""
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
     gx = cv2.Sobel(blur, cv2.CV_32F, 1, 0, ksize=3)
     gy = cv2.Sobel(blur, cv2.CV_32F, 0, 1, ksize=3)
-    mag = cv2.magnitude(gx, gy)
+    return cv2.magnitude(gx, gy)
 
+
+def circle_edge_score_from_mag(
+    magnitude: np.ndarray,
+    circle: Circle,
+    n_samples: int = 720,
+) -> float:
+    """事前計算済みgradient magnitude上で候補円周の平均gradientを求める。"""
     theta = np.linspace(0.0, 2.0 * np.pi, n_samples, endpoint=False)
     xs = np.rint(circle.cx + circle.r * np.cos(theta)).astype(np.int32)
     ys = np.rint(circle.cy + circle.r * np.sin(theta)).astype(np.int32)
 
     valid = (
-        (xs >= 0) & (xs < gray.shape[1])
-        & (ys >= 0) & (ys < gray.shape[0])
+        (xs >= 0) & (xs < magnitude.shape[1])
+        & (ys >= 0) & (ys < magnitude.shape[0])
     )
     if int(valid.sum()) < n_samples * 0.8:
         return -np.inf
-    return float(mag[ys[valid], xs[valid]].mean())
+    return float(magnitude[ys[valid], xs[valid]].mean())
 
 
 def refine_circle_local(
@@ -150,11 +149,13 @@ def refine_circle_local(
     ROI prior周囲だけで円中心・半径を微調整する。
 
     完全自動検出ではなく、校正済みpriorを初期値とする制約付き探索である。
+    gradientは画像ごとに一度だけ計算し、候補円では円周samplingのみ行う。
     """
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    magnitude = make_gradient_magnitude(gray)
 
     best = initial
-    best_score = circle_edge_score(gray, initial)
+    best_score = circle_edge_score_from_mag(magnitude, initial)
 
     dx_values = range(-center_search_px, center_search_px + 1, max(1, center_step))
     dy_values = range(-center_search_px, center_search_px + 1, max(1, center_step))
@@ -168,7 +169,7 @@ def refine_circle_local(
                     cy=initial.cy + dy,
                     r=max(3.0, initial.r + dr),
                 )
-                score = circle_edge_score(gray, candidate)
+                score = circle_edge_score_from_mag(magnitude, candidate)
                 if score > best_score:
                     best = candidate
                     best_score = score
@@ -177,9 +178,7 @@ def refine_circle_local(
 
 
 def profile_for_category(profile_root: Path, category: str) -> Tuple[Dict, Path]:
-    """
-    profile-rootが直接profileフォルダでも、カテゴリ別フォルダ群でも対応する。
-    """
+    """profile-rootが直接profileフォルダでも、カテゴリ別フォルダ群でも対応する。"""
     direct = profile_root / "roi_profile.json"
     if direct.exists():
         return load_json(direct), profile_root
@@ -255,7 +254,6 @@ def process_one(
     if gt_path is not None:
         gt = imread_unicode(gt_path, cv2.IMREAD_GRAYSCALE)
         if gt.shape != (h, w):
-            # 元データでサイズが異なる場合のみ画像座標へ合わせる。
             gt = cv2.resize(gt, (w, h), interpolation=cv2.INTER_NEAREST)
         gt = np.where(gt > 0, 255, 0).astype(np.uint8)
 
@@ -297,11 +295,9 @@ def process_category(
 ) -> List[Dict]:
     rows: List[Dict] = []
 
-    # train/good
     train_good = list_images(category_path / "train" / "good")
     jobs = [("train", "good", p, None) for p in train_good]
 
-    # test/* と対応GT
     test_root = category_path / "test"
     for defect_dir in sorted(p for p in test_root.iterdir() if p.is_dir()):
         defect_type = defect_dir.name
@@ -359,9 +355,7 @@ def process_category(
         if index % 100 == 0 or index == len(jobs):
             print(f"[{category}] {index}/{len(jobs)}")
 
-    print(
-        f"[{category}] 完了: {len(jobs)}枚, total={time.perf_counter()-start:.1f}s"
-    )
+    print(f"[{category}] 完了: {len(jobs)}枚, total={time.perf_counter()-start:.1f}s")
     return rows
 
 
