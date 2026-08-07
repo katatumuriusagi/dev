@@ -1,0 +1,1 @@
+Trigger build using the workflow that publishes the compiled PDF and normalized LaTeX source.
