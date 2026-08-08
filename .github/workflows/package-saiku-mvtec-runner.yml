@@ -1,0 +1,38 @@
+name: Package Saiku MVTec Runner
+
+on:
+  push:
+    branches:
+      - saiku-mvtec-runner-20260806
+    paths:
+      - "artifacts/saiku_mvtec_experiment_runner_20260806/**"
+      - ".github/workflows/package-saiku-mvtec-runner.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "artifacts/saiku_mvtec_experiment_runner_20260806/**"
+      - ".github/workflows/package-saiku-mvtec-runner.yml"
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python syntax check
+        run: |
+          python -m py_compile artifacts/saiku_mvtec_experiment_runner_20260806/saiku_patchcore_mvtec_experiment.py
+
+      - name: Create package
+        run: |
+          cd artifacts
+          zip -r saiku_mvtec_experiment_runner_20260806.zip saiku_mvtec_experiment_runner_20260806
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: saiku-mvtec-experiment-runner
+          path: artifacts/saiku_mvtec_experiment_runner_20260806.zip
